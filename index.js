@@ -1,9 +1,8 @@
 require("dotenv").config();
 const { Client, IntentsBitField } = require("discord.js");
-const OpenAI = require("openai");
+const axios = require("axios"); // Use axios to make HTTP requests
 
 // Initialize Discord client with necessary intents
-//first commit
 const client = new Client({
   intents: [
     IntentsBitField.Flags.Guilds,
@@ -15,11 +14,6 @@ const client = new Client({
 // Log when the bot is online
 client.on("ready", () => {
   console.log("The bot is online!");
-});
-
-// Initialize OpenAI configuration
-const openai = new OpenAI({
-  apiKey: process.env.API_KEY,
 });
 
 // Handle message creation event
@@ -68,14 +62,22 @@ client.on("messageCreate", async (message) => {
       }
     });
 
-    // Generate response from OpenAI
-    const result = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: conversationLog,
-    });
+    // Make the request to Trussed AI API
+    const response = await axios.post(
+      "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+      {
+        model: "gpt-4",
+        messages: conversationLog,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.API_KEY}`,
+        },
+      }
+    );
 
     // Reply to the message with the AI response
-    message.reply(result.choices[0].message.content);
+    message.reply(response.data.choices[0].message.content);
   } catch (error) {
     console.log(`ERR: ${error}`);
   }
