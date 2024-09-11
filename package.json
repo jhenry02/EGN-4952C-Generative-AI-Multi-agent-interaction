@@ -18,6 +18,8 @@
     "dotenv": "^16.4.5",
     "fs": "^0.0.1-security",
     "openai": "^4.58.2",
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^1.1.1",
+    "sequelize": "^6.37.3",
+    "sqlite3": "^5.1.7"
   }
 }
