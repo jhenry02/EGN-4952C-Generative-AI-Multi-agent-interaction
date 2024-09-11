@@ -3,8 +3,48 @@ const { Client, IntentsBitField, Events } = require("discord.js");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const { Sequelize, DataTypes } = require('sequelize');
 
-// Initialize Discord client with necessary intents
+// Initialize Sequelize with SQLite (you can replace it with MySQL, PostgreSQL)
+const sequelize = new Sequelize('sqlite::memory:');
+
+// Define Models
+const User = sequelize.define('User', {
+  discordId: { type: DataTypes.STRING, primaryKey: true },
+  role: { type: DataTypes.ENUM('professor', 'student'), allowNull: false },
+  name: { type: DataTypes.STRING }
+});
+
+const Course = sequelize.define('Course', {
+  courseName: { type: DataTypes.STRING, allowNull: false },
+  description: { type: DataTypes.TEXT },
+  createdBy: { type: DataTypes.STRING, allowNull: false }
+});
+
+const Lesson = sequelize.define('Lesson', {
+  title: { type: DataTypes.STRING, allowNull: false },
+  courseId: { type: DataTypes.INTEGER, allowNull: false }
+});
+
+const Material = sequelize.define('Material', {
+  fileName: { type: DataTypes.STRING, allowNull: false },
+  fileUrl: { type: DataTypes.STRING, allowNull: false },
+  lessonId: { type: DataTypes.INTEGER, allowNull: false }
+});
+
+const Quiz = sequelize.define('Quiz', {
+  question: { type: DataTypes.STRING, allowNull: false },
+  answer: { type: DataTypes.STRING, allowNull: false },
+  lessonId: { type: DataTypes.INTEGER, allowNull: false }
+});
+
+// Define Relationships
+Course.hasMany(Lesson);
+Lesson.belongsTo(Course);
+Lesson.hasMany(Material);
+Lesson.hasMany(Quiz);
+
+// Initialize Discord client
 const client = new Client({
   intents: [
     IntentsBitField.Flags.Guilds,
@@ -17,11 +57,15 @@ const client = new Client({
 // Log when the bot is online
 client.on("ready", () => {
   console.log("The bot is online!");
+  
+  // Sync Database
+  sequelize.sync({ force: true }).then(() => {
+    console.log("Database & tables created!");
+  });
 });
 
 // Handle message creation event
 client.on("messageCreate", async (message) => {
-  // Ignore bot messages
   if (message.author.bot) return;
 
   // Handle file uploads
@@ -46,11 +90,16 @@ client.on("messageCreate", async (message) => {
 
       response.data.pipe(fileStream);
 
-      fileStream.on("finish", () => {
-        message.reply(
-          `File "${fileName}" uploaded successfully and saved locally.`
-        );
-        // Here, add logic to store and organize the uploaded materials
+      fileStream.on("finish", async () => {
+        message.reply(`File "${fileName}" uploaded successfully and saved locally.`);
+
+        // Here you would create a Material entry in the database
+        const material = await Material.create({
+          fileName: fileName,
+          fileUrl: fileUrl,
+          lessonId: 1 // For now, set lessonId to 1 (replace with actual logic)
+        });
+        console.log(`Material saved: ${material.fileName}`);
       });
 
       fileStream.on("error", (err) => {
@@ -68,14 +117,14 @@ client.on("messageCreate", async (message) => {
 
     // Command to create a class outline
     if (command === "createoutline") {
-      const lectureLength = args[0] || "45"; // Default to 45 minutes if not specified
-      const uploadedMaterials = getUploadedMaterials(); // Function to fetch and organize uploaded materials
+      const lectureLength = args[0] || "45"; 
+      
+      // Fetch materials related to lessons
+      const materials = await Material.findAll({ where: { lessonId: 1 } });
+      const materialNames = materials.map((material) => material.fileName).join(", ");
 
-      if (uploadedMaterials.length === 0) {
-        message.reply(
-          "No materials uploaded. Please upload materials before creating an outline."
-        );
-        return;
+      if (!materialNames) {
+        return message.reply("No materials uploaded.");
       }
 
       // Call AI to generate a class outline based on materials
@@ -87,9 +136,7 @@ client.on("messageCreate", async (message) => {
             messages: [
               {
                 role: "system",
-                content: `Create a ${lectureLength}-minute class outline using the following materials: ${uploadedMaterials.join(
-                  ", "
-                )}.`,
+                content: `Create a ${lectureLength}-minute class outline using the following materials: ${materialNames}.`,
               },
             ],
           },
@@ -100,54 +147,47 @@ client.on("messageCreate", async (message) => {
           }
         );
 
-        // Split content if it exceeds 2000 characters
         const content = response.data.choices[0].message.content;
         splitAndSendMessage(message.channel, content, 2000);
       } catch (error) {
         console.log(`ERR: ${error}`);
-        message.reply(
-          "Failed to create class outline. Please try again later."
-        );
+        message.reply("Failed to create class outline. Please try again later.");
       }
     }
 
     // Command to release materials
     if (command === "releasematerials") {
-      const materialIds = args; // IDs or filenames of materials to be released
+      const materialIds = args; 
 
       if (materialIds.length === 0) {
         message.reply("Please specify the materials to release.");
         return;
       }
 
-      // Implement logic to release materials to students
       message.reply(`Materials released: ${materialIds.join(", ")}`);
     }
   }
 
-  // Handle normal messages (not commands)
+  // Normal chat-based interaction with AI
   if (!message.content.startsWith("!")) {
     let conversationLog = [
       { role: "system", content: "You are a friendly chatbot." },
     ];
 
     try {
-      await message.channel.sendTyping(); // Simulate typing indicator
+      await message.channel.sendTyping();
 
       let prevMessages = await message.channel.messages.fetch({ limit: 15 });
       prevMessages.reverse();
 
       prevMessages.forEach((msg) => {
-        if (msg.content.startsWith("!")) return; // Skip commands
-        if (msg.author.id !== client.user.id && message.author.bot) return; // Skip other bots
+        if (msg.content.startsWith("!")) return;
+        if (msg.author.id !== client.user.id && message.author.bot) return;
 
         if (msg.author.id == client.user.id) {
           conversationLog.push({
             role: "assistant",
             content: msg.content,
-            name: msg.author.username
-              .replace(/\s+/g, "_")
-              .replace(/[^\w\s]/gi, ""),
           });
         }
 
@@ -155,9 +195,6 @@ client.on("messageCreate", async (message) => {
           conversationLog.push({
             role: "user",
             content: msg.content,
-            name: message.author.username
-              .replace(/\s+/g, "_")
-              .replace(/[^\w\s]/gi, ""),
           });
         }
       });
@@ -183,89 +220,7 @@ client.on("messageCreate", async (message) => {
   }
 });
 
-// Handle interactions (Slash Commands)
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isCommand()) return;
-
-  const { commandName, options } = interaction;
-
-  try {
-    // Acknowledge the interaction immediately
-    await interaction.deferReply();
-
-    if (commandName === "createoutline") {
-      const lectureLength = options.getString("length") || "45";
-      const uploadedMaterials = getUploadedMaterials();
-
-      if (uploadedMaterials.length === 0) {
-        await interaction.editReply(
-          "No materials uploaded. Please upload materials before creating an outline."
-        );
-        return;
-      }
-
-      const response = await axios.post(
-        "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-        {
-          model: "gpt-4",
-          messages: [
-            {
-              role: "system",
-              content: `Create a ${lectureLength}-minute class outline using the following materials: ${uploadedMaterials.join(
-                ", "
-              )}.`,
-            },
-          ],
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.API_KEY}`,
-          },
-        }
-      );
-
-      const content = response.data.choices[0].message.content;
-      await interaction.editReply(
-        content.length > 2000
-          ? "Response is too long to display in a single message."
-          : content
-      );
-      if (content.length > 2000)
-        splitAndSendMessage(interaction.channel, content, 2000);
-    }
-
-    if (commandName === "releasematerials") {
-      const materialIds = options
-        .getString("materials")
-        .split(",")
-        .map((id) => id.trim());
-
-      if (materialIds.length === 0) {
-        await interaction.editReply("Please specify the materials to release.");
-        return;
-      }
-
-      await interaction.editReply(
-        `Materials released: ${materialIds.join(", ")}`
-      );
-      // Implement logic to release materials
-    }
-  } catch (error) {
-    console.error(`ERR: ${error}`);
-    await interaction.editReply(
-      "An error occurred while processing your request."
-    );
-  }
-});
-
-// Function to get uploaded materials
-function getUploadedMaterials() {
-  return fs
-    .readdirSync(path.join(__dirname, "uploads"))
-    .map((file) => path.basename(file));
-}
-
-// Function to split and send long messages
+// Utility function for splitting and sending long messages
 function splitAndSendMessage(channel, content, chunkSize) {
   for (let i = 0; i < content.length; i += chunkSize) {
     const chunk = content.slice(i, i + chunkSize);
@@ -273,5 +228,5 @@ function splitAndSendMessage(channel, content, chunkSize) {
   }
 }
 
-// Login to Discord with the bot token
+// Login to Discord
 client.login(process.env.TOKEN);
