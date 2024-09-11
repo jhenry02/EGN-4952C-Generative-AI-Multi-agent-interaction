@@ -5,14 +5,6 @@ const clientId = process.env.CLIENT_ID;
 const guildId = process.env.GUILD_ID;
 const token = process.env.TOKEN;
 
-console.log("Client ID:", clientId);
-console.log("Guild ID:", guildId);
-console.log("Token:", token);
-if (!clientId || !guildId || !token) {
-  console.error("Missing one or more required environment variables.");
-  process.exit(1);
-}
-
 const rest = new REST({ version: "10" }).setToken(token);
 
 const commands = [
@@ -45,11 +37,9 @@ const commands = [
 (async () => {
   try {
     console.log("Started refreshing application (/) commands.");
-
     await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
       body: commands,
     });
-
     console.log("Successfully reloaded application (/) commands.");
   } catch (error) {
     console.error(error);
