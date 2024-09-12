@@ -26,6 +26,12 @@ const commands = [
         description: "Length of the class outline in minutes",
         required: false,
       },
+      {
+        type: 3, // STRING
+        name: "name",
+        description: "Name of the file to save the outline as",
+        required: false,
+      },
     ],
   },
   {
@@ -36,6 +42,18 @@ const commands = [
         type: 3, // STRING
         name: "materials",
         description: "IDs or filenames of materials to release",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "save",
+    description: "Save the generated outline or lecture to your local machine",
+    options: [
+      {
+        type: 3, // STRING
+        name: "name",
+        description: "The name of the file to save",
         required: true,
       },
     ],

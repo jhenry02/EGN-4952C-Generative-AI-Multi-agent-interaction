@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { Client, IntentsBitField, Events } = require("discord.js");
+const { Client, IntentsBitField } = require("discord.js");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
@@ -100,9 +100,9 @@ client.on("messageCreate", async (message) => {
           }
         );
 
-        // Split content if it exceeds 2000 characters
-        const content = response.data.choices[0].message.content;
-        splitAndSendMessage(message.channel, content, 2000);
+        message.reply(
+          `Here is your ${lectureLength}-minute class outline:\n${response.data.choices[0].message.content}`
+        );
       } catch (error) {
         console.log(`ERR: ${error}`);
         message.reply(
@@ -175,8 +175,7 @@ client.on("messageCreate", async (message) => {
         }
       );
 
-      const content = response.data.choices[0].message.content;
-      splitAndSendMessage(message.channel, content, 2000);
+      message.reply(response.data.choices[0].message.content);
     } catch (error) {
       console.log(`ERR: ${error}`);
     }
@@ -184,26 +183,23 @@ client.on("messageCreate", async (message) => {
 });
 
 // Handle interactions (Slash Commands)
-client.on(Events.InteractionCreate, async (interaction) => {
+client.on("interactionCreate", async (interaction) => {
   if (!interaction.isCommand()) return;
 
   const { commandName, options } = interaction;
 
-  try {
-    // Acknowledge the interaction immediately
-    await interaction.deferReply();
+  if (commandName === "createoutline") {
+    const lectureLength = options.getString("length") || "45";
+    const uploadedMaterials = getUploadedMaterials();
 
-    if (commandName === "createoutline") {
-      const lectureLength = options.getString("length") || "45";
-      const uploadedMaterials = getUploadedMaterials();
+    if (uploadedMaterials.length === 0) {
+      await interaction.reply(
+        "No materials uploaded. Please upload materials before creating an outline."
+      );
+      return;
+    }
 
-      if (uploadedMaterials.length === 0) {
-        await interaction.editReply(
-          "No materials uploaded. Please upload materials before creating an outline."
-        );
-        return;
-      }
-
+    try {
       const response = await axios.post(
         "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
         {
@@ -224,37 +220,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       );
 
-      const content = response.data.choices[0].message.content;
-      await interaction.editReply(
-        content.length > 2000
-          ? "Response is too long to display in a single message."
-          : content
+      await interaction.reply(
+        `Here is your ${lectureLength}-minute class outline:\n${response.data.choices[0].message.content}`
       );
-      if (content.length > 2000)
-        splitAndSendMessage(interaction.channel, content, 2000);
+    } catch (error) {
+      console.error(`ERR: ${error}`);
+      await interaction.reply(
+        "Failed to create class outline. Please try again later."
+      );
+    }
+  }
+
+  if (commandName === "releasematerials") {
+    const materialIds = options
+      .getString("materials")
+      .split(",")
+      .map((id) => id.trim());
+
+    if (materialIds.length === 0) {
+      await interaction.reply("Please specify the materials to release.");
+      return;
     }
 
-    if (commandName === "releasematerials") {
-      const materialIds = options
-        .getString("materials")
-        .split(",")
-        .map((id) => id.trim());
-
-      if (materialIds.length === 0) {
-        await interaction.editReply("Please specify the materials to release.");
-        return;
-      }
-
-      await interaction.editReply(
-        `Materials released: ${materialIds.join(", ")}`
-      );
-      // Implement logic to release materials
-    }
-  } catch (error) {
-    console.error(`ERR: ${error}`);
-    await interaction.editReply(
-      "An error occurred while processing your request."
-    );
+    await interaction.reply(`Materials released: ${materialIds.join(", ")}`);
+    // Implement logic to release materials
   }
 });
 
@@ -263,14 +252,6 @@ function getUploadedMaterials() {
   return fs
     .readdirSync(path.join(__dirname, "uploads"))
     .map((file) => path.basename(file));
-}
-
-// Function to split and send long messages
-function splitAndSendMessage(channel, content, chunkSize) {
-  for (let i = 0; i < content.length; i += chunkSize) {
-    const chunk = content.slice(i, i + chunkSize);
-    channel.send(chunk);
-  }
 }
 
 // Login to Discord with the bot token
