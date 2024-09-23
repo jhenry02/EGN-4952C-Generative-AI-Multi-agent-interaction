@@ -14,6 +14,8 @@ const client = new Client({
   ],
 });
 
+let lastGeneratedOutline = ""; // Variable to store the most recent outline
+
 // Log when the bot is online
 client.on("ready", () => {
   console.log("The bot is online!");
@@ -38,31 +40,35 @@ client.on("messageCreate", async (message) => {
       const filePath = path.join(uploadDir, fileName);
       const fileStream = fs.createWriteStream(filePath);
 
-      const response = await axios({
-        method: "get",
-        url: fileUrl,
-        responseType: "stream",
-      });
+      try {
+        const response = await axios({
+          method: "get",
+          url: fileUrl,
+          responseType: "stream",
+        });
 
-      response.data.pipe(fileStream);
+        response.data.pipe(fileStream);
 
-      fileStream.on("finish", () => {
-        message.reply(
-          `File "${fileName}" uploaded successfully and saved locally.`
-        );
-        // Here, add logic to store and organize the uploaded materials
-      });
+        fileStream.on("finish", () => {
+          message.reply(
+            `File "${fileName}" uploaded successfully and saved locally.`
+          );
+        });
 
-      fileStream.on("error", (err) => {
-        console.error(`Error downloading file: ${err.message}`);
+        fileStream.on("error", (err) => {
+          console.error(`Error downloading file: ${err.message}`);
+          message.reply(`Failed to upload "${fileName}".`);
+        });
+      } catch (error) {
+        console.error(`Error downloading file: ${error.message}`);
         message.reply(`Failed to upload "${fileName}".`);
-      });
+      }
     });
     return;
   }
 
-  // Handle command messages
-  if (message.content.startsWith("!")) {
+  // Handle command messages (starts with "/")
+  if (message.content.startsWith("/")) {
     const args = message.content.slice(1).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
@@ -100,86 +106,84 @@ client.on("messageCreate", async (message) => {
           }
         );
 
-        // Split content if it exceeds 2000 characters
         const content = response.data.choices[0].message.content;
+        lastGeneratedOutline = content; // Store the generated outline
         splitAndSendMessage(message.channel, content, 2000);
       } catch (error) {
-        console.log(`ERR: ${error}`);
+        console.error(`Error creating class outline: ${error.message}`);
         message.reply(
           "Failed to create class outline. Please try again later."
         );
       }
     }
 
-    // Command to release materials
-    if (command === "releasematerials") {
-      const materialIds = args; // IDs or filenames of materials to be released
-
-      if (materialIds.length === 0) {
-        message.reply("Please specify the materials to release.");
+    // Command to save the most recent outline to a file
+    if (command === "save") {
+      const nameArgIndex = args.findIndex((arg) => arg === "name");
+      if (nameArgIndex === -1 || nameArgIndex === args.length - 1) {
+        message.reply(
+          "Please provide a name for the file using the format: /save name <desired_name>"
+        );
         return;
       }
 
-      // Implement logic to release materials to students
-      message.reply(`Materials released: ${materialIds.join(", ")}`);
-    }
-  }
+      const fileName = args[nameArgIndex + 1];
+      if (!lastGeneratedOutline) {
+        message.reply(
+          "No outline available to save. Please create an outline first."
+        );
+        return;
+      }
 
-  // Handle normal messages (not commands)
-  if (!message.content.startsWith("!")) {
-    let conversationLog = [
-      { role: "system", content: "You are a friendly chatbot." },
-    ];
+      // Create a /saves directory if it doesn't exist
+      const savesDir = path.join(__dirname, "saves");
+      if (!fs.existsSync(savesDir)) {
+        fs.mkdirSync(savesDir, { recursive: true });
+      }
 
-    try {
-      await message.channel.sendTyping(); // Simulate typing indicator
+      // Save the outline to a file in the /saves directory
+      const filePath = path.join(savesDir, `${fileName}.txt`);
 
-      let prevMessages = await message.channel.messages.fetch({ limit: 15 });
-      prevMessages.reverse();
-
-      prevMessages.forEach((msg) => {
-        if (msg.content.startsWith("!")) return; // Skip commands
-        if (msg.author.id !== client.user.id && message.author.bot) return; // Skip other bots
-
-        if (msg.author.id == client.user.id) {
-          conversationLog.push({
-            role: "assistant",
-            content: msg.content,
-            name: msg.author.username
-              .replace(/\s+/g, "_")
-              .replace(/[^\w\s]/gi, ""),
-          });
-        }
-
-        if (msg.author.id == message.author.id) {
-          conversationLog.push({
-            role: "user",
-            content: msg.content,
-            name: message.author.username
-              .replace(/\s+/g, "_")
-              .replace(/[^\w\s]/gi, ""),
-          });
+      fs.writeFile(filePath, lastGeneratedOutline, (err) => {
+        if (err) {
+          console.error(`Error saving outline: ${err.message}`);
+          message.reply("Failed to save the outline. Please try again.");
+        } else {
+          message.reply(`Outline saved successfully to ${filePath}`);
         }
       });
-
-      const response = await axios.post(
-        "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-        {
-          model: "gpt-4",
-          messages: conversationLog,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.API_KEY}`,
-          },
-        }
-      );
-
-      const content = response.data.choices[0].message.content;
-      splitAndSendMessage(message.channel, content, 2000);
-    } catch (error) {
-      console.log(`ERR: ${error}`);
     }
+
+    // Other commands (like /save) go here...
+
+    return; // Ensure it doesn't continue to handle general messages after command execution
+  }
+
+  // Handle normal messages (not starting with "/")
+  try {
+    await message.channel.sendTyping(); // Simulate typing indicator
+
+    // Simple AI conversation logic for normal messages
+    const response = await axios.post(
+      "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+      {
+        model: "gpt-4",
+        messages: [
+          { role: "system", content: "You are a friendly chatbot." },
+          { role: "user", content: message.content },
+        ],
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.API_KEY}`,
+        },
+      }
+    );
+
+    const content = response.data.choices[0].message.content;
+    splitAndSendMessage(message.channel, content, 2000);
+  } catch (error) {
+    console.error(`Error in message handling: ${error.message}`);
   }
 });
 
@@ -248,10 +252,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.editReply(
         `Materials released: ${materialIds.join(", ")}`
       );
-      // Implement logic to release materials
     }
   } catch (error) {
-    console.error(`ERR: ${error}`);
+    console.error(`Error handling interaction: ${error.message}`);
     await interaction.editReply(
       "An error occurred while processing your request."
     );
