@@ -3,6 +3,29 @@ const { Client, IntentsBitField, Events } = require("discord.js");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const sqlite3 = require("sqlite3").verbose();
+
+const db = new sqlite3.Database('./uploads.db', (err) => {
+  if (err) {
+    console.error('Error opening database ' + err.message);
+  } else {
+    console.log('Connected to the SQLite database.');
+  }
+});
+
+// Create a table if it doesn't exist
+db.run(`CREATE TABLE IF NOT EXISTS uploads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fileName TEXT,
+  filePath TEXT,
+  uploadedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+)`, (err) => {
+  if (err) {
+    console.error('Error creating table ' + err.message);
+  } else {
+    console.log('Uploads table is ready.');
+  }
+});
 
 // Initialize Discord client with necessary intents
 const client = new Client({
@@ -51,7 +74,19 @@ client.on("messageCreate", async (message) => {
 
         fileStream.on("finish", () => {
           message.reply(
-            `File "${fileName}" uploaded successfully and saved locally.`
+            `File "${fileName}" uploaded successfully and saved to "${filePath}".`
+          );
+          
+          // Insert file info into the SQLite database
+          db.run(
+            `INSERT INTO uploads (fileName, filePath) VALUES (?, ?)`,
+            [fileName, filePath],
+            function(err) {
+              if (err) {
+                return console.error("Error inserting into database", err.message);
+              }
+              console.log(`File "${fileName}" stored at "${filePath}" with ID ${this.lastID}`);
+            }
           );
         });
 
