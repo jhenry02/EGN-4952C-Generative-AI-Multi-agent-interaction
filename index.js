@@ -5,27 +5,30 @@ const fs = require("fs");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 
-const db = new sqlite3.Database('./uploads.db', (err) => {
+const db = new sqlite3.Database("./uploads.db", (err) => {
   if (err) {
-    console.error('Error opening database ' + err.message);
+    console.error("Error opening database " + err.message);
   } else {
-    console.log('Connected to the SQLite database.');
+    console.log("Connected to the SQLite database.");
   }
 });
 
 // Create a table if it doesn't exist
-db.run(`CREATE TABLE IF NOT EXISTS uploads (
+db.run(
+  `CREATE TABLE IF NOT EXISTS uploads (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   fileName TEXT,
   filePath TEXT,
   uploadedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-)`, (err) => {
-  if (err) {
-    console.error('Error creating table ' + err.message);
-  } else {
-    console.log('Uploads table is ready.');
+)`,
+  (err) => {
+    if (err) {
+      console.error("Error creating table " + err.message);
+    } else {
+      console.log("Uploads table is ready.");
+    }
   }
-});
+);
 
 // Initialize Discord client with necessary intents
 const client = new Client({
@@ -76,16 +79,21 @@ client.on("messageCreate", async (message) => {
           message.reply(
             `File "${fileName}" uploaded successfully and saved to "${filePath}".`
           );
-          
+
           // Insert file info into the SQLite database
           db.run(
             `INSERT INTO uploads (fileName, filePath) VALUES (?, ?)`,
             [fileName, filePath],
-            function(err) {
+            function (err) {
               if (err) {
-                return console.error("Error inserting into database", err.message);
+                return console.error(
+                  "Error inserting into database",
+                  err.message
+                );
               }
-              console.log(`File "${fileName}" stored at "${filePath}" with ID ${this.lastID}`);
+              console.log(
+                `File "${fileName}" stored at "${filePath}" with ID ${this.lastID}`
+              );
             }
           );
         });
@@ -110,17 +118,19 @@ client.on("messageCreate", async (message) => {
     // Command to create a class outline
     if (command === "createoutline") {
       const lectureLength = args[0] || "45"; // Default to 45 minutes if not specified
-      const uploadedMaterials = getUploadedMaterials(); // Function to fetch and organize uploaded materials
 
-      if (uploadedMaterials.length === 0) {
-        message.reply(
-          "No materials uploaded. Please upload materials before creating an outline."
-        );
-        return;
-      }
-
-      // Call AI to generate a class outline based on materials
       try {
+        // Fetch uploaded materials from the SQLite database asynchronously
+        const uploadedMaterials = await getUploadedMaterials();
+
+        if (uploadedMaterials.length === 0) {
+          message.reply(
+            "No materials uploaded. Please upload materials before creating an outline."
+          );
+          return;
+        }
+
+        // Call AI to generate a class outline based on materials
         const response = await axios.post(
           "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
           {
@@ -189,8 +199,6 @@ client.on("messageCreate", async (message) => {
       });
     }
 
-    // Other commands (like /save) go here...
-
     return; // Ensure it doesn't continue to handle general messages after command execution
   }
 
@@ -234,7 +242,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (commandName === "createoutline") {
       const lectureLength = options.getString("length") || "45";
-      const uploadedMaterials = getUploadedMaterials();
+      const uploadedMaterials = await getUploadedMaterials();
 
       if (uploadedMaterials.length === 0) {
         await interaction.editReply(
@@ -296,20 +304,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// Function to get uploaded materials
-function getUploadedMaterials() {
-  return fs
-    .readdirSync(path.join(__dirname, "uploads"))
-    .map((file) => path.basename(file));
+// Async function to get uploaded materials from the SQLite database
+async function getUploadedMaterials() {
+  return new Promise((resolve, reject) => {
+    db.all("SELECT fileName FROM uploads", [], (err, rows) => {
+      if (err) {
+        console.error("Error fetching materials from database", err.message);
+        reject(err);
+        return;
+      }
+      // Extract filenames from the database result
+      const fileNames = rows.map((row) => row.fileName);
+      resolve(fileNames);
+    });
+  });
 }
 
-// Function to split and send long messages
-function splitAndSendMessage(channel, content, chunkSize) {
-  for (let i = 0; i < content.length; i += chunkSize) {
-    const chunk = content.slice(i, i + chunkSize);
-    channel.send(chunk);
+// Function to split long messages and send in parts
+function splitAndSendMessage(channel, content, limit) {
+  const parts = [];
+  for (let i = 0; i < content.length; i += limit) {
+    parts.push(content.slice(i, i + limit));
   }
+  parts.forEach((part) => channel.send(part));
 }
 
-// Login to Discord with the bot token
+// Log in to Discord
 client.login(process.env.TOKEN);
