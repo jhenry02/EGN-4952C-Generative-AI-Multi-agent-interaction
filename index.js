@@ -13,19 +13,51 @@ const db = new sqlite3.Database("./uploads.db", (err) => {
   }
 });
 
-// Create a table if it doesn't exist
+// Create tables if they don't exist
 db.run(
   `CREATE TABLE IF NOT EXISTS uploads (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  fileName TEXT,
-  filePath TEXT,
-  uploadedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-)`,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fileName TEXT,
+    filePath TEXT,
+    uploadedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`,
   (err) => {
     if (err) {
-      console.error("Error creating table " + err.message);
+      console.error("Error creating uploads table " + err.message);
     } else {
       console.log("Uploads table is ready.");
+    }
+  }
+);
+
+db.run(
+  `CREATE TABLE IF NOT EXISTS generated_outlines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    outline TEXT,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`,
+  (err) => {
+    if (err) {
+      console.error("Error creating generated_outlines table " + err.message);
+    } else {
+      console.log("Generated outlines table is ready.");
+    }
+  }
+);
+
+db.run(
+  `CREATE TABLE IF NOT EXISTS saved_outlines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    outline TEXT,
+    savedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`,
+  (err) => {
+    if (err) {
+      console.error("Error creating saved_outlines table " + err.message);
+    } else {
+      console.log("Saved outlines table is ready.");
     }
   }
 );
@@ -40,7 +72,7 @@ const client = new Client({
   ],
 });
 
-let lastGeneratedOutline = ""; // Variable to store the most recent outline
+let lastGeneratedOutlineId = null; // Store the ID of the last generated outline
 
 // Log when the bot is online
 client.on("ready", () => {
@@ -110,7 +142,7 @@ client.on("messageCreate", async (message) => {
     return;
   }
 
-  // Handle command messages (starts with "/")
+  // Handle commands
   if (message.content.startsWith("/")) {
     const args = message.content.slice(1).trim().split(/ +/);
     const command = args.shift().toLowerCase();
@@ -152,8 +184,20 @@ client.on("messageCreate", async (message) => {
         );
 
         const content = response.data.choices[0].message.content;
-        lastGeneratedOutline = content; // Store the generated outline
+        lastGeneratedOutlineId = Date.now(); // Store the generated outline
         splitAndSendMessage(message.channel, content, 2000);
+        db.run(
+          "INSERT INTO generated_outlines (id, name, outline) VALUES (?, ?, ?)",
+          [lastGeneratedOutlineId, "Outline", content],
+          function (err) {
+            if (err) {
+              console.error("Error saving outline to database", err.message);
+              message.reply("Failed to save the generated outline.");
+            } else {
+              splitAndSendMessage(message.channel, content, 2000);
+            }
+          }
+        );
       } catch (error) {
         console.error(`Error creating class outline: ${error.message}`);
         message.reply(
@@ -161,8 +205,6 @@ client.on("messageCreate", async (message) => {
         );
       }
     }
-
-    // Command to save the most recent outline to a file
     if (command === "save") {
       const nameArgIndex = args.findIndex((arg) => arg === "name");
       if (nameArgIndex === -1 || nameArgIndex === args.length - 1) {
@@ -173,35 +215,65 @@ client.on("messageCreate", async (message) => {
       }
 
       const fileName = args[nameArgIndex + 1];
-      if (!lastGeneratedOutline) {
+      if (!lastGeneratedOutlineId) {
         message.reply(
           "No outline available to save. Please create an outline first."
         );
         return;
       }
 
-      // Create a /saves directory if it doesn't exist
-      const savesDir = path.join(__dirname, "saves");
-      if (!fs.existsSync(savesDir)) {
-        fs.mkdirSync(savesDir, { recursive: true });
-      }
+      db.get(
+        `SELECT outline FROM generated_outlines WHERE id = ?`,
+        [lastGeneratedOutlineId],
+        (err, row) => {
+          if (err) {
+            console.error("Error retrieving generated outline", err.message);
+            message.reply("Failed to retrieve the generated outline.");
+            return;
+          }
 
-      // Save the outline to a file in the /saves directory
-      const filePath = path.join(savesDir, `${fileName}.txt`);
+          if (!row) {
+            message.reply(
+              "No generated outline found to save. Please generate an outline first."
+            );
+            return;
+          }
 
-      fs.writeFile(filePath, lastGeneratedOutline, (err) => {
-        if (err) {
-          console.error(`Error saving outline: ${err.message}`);
-          message.reply("Failed to save the outline. Please try again.");
-        } else {
-          message.reply(`Outline saved successfully to ${filePath}`);
+          db.run(
+            "INSERT INTO saved_outlines (name, outline) VALUES (?, ?)",
+            [fileName, row.outline],
+            function (err) {
+              if (err) {
+                console.error("Error saving outline to database", err.message);
+                message.reply("Failed to save the outline. Please try again.");
+              } else {
+                db.run(
+                  `DELETE FROM generated_outlines WHERE id = ?`,
+                  [lastGeneratedOutlineId],
+                  (err) => {
+                    if (err) {
+                      console.error(
+                        "Error deleting old generated outline",
+                        err.message
+                      );
+                    }
+                  }
+                );
+                message.reply(
+                  `Outline saved successfully with the name "${fileName}".`
+                );
+              }
+            }
+          );
         }
-      });
+      );
     }
-
-    return; // Ensure it doesn't continue to handle general messages after command execution
+    return;
   }
 
+  // Handle non-command messages
+  // You can add custom logic for different types of non-command messages here.
+  // For example, responding to specific keywords or just echoing back the message.
   // Handle normal messages (not starting with "/")
   try {
     await message.channel.sendTyping(); // Simulate typing indicator
@@ -230,7 +302,6 @@ client.on("messageCreate", async (message) => {
   }
 });
 
-// Handle interactions (Slash Commands)
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isCommand()) return;
 
@@ -303,31 +374,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
     );
   }
 });
+// Function to split and send long messages
+function splitAndSendMessage(channel, content, delay) {
+  const chunkSize = 2000; // Max message length
+  const numChunks = Math.ceil(content.length / chunkSize);
+  let start = 0;
 
-// Async function to get uploaded materials from the SQLite database
-async function getUploadedMaterials() {
+  for (let i = 0; i < numChunks; i++) {
+    const chunk = content.substring(start, start + chunkSize);
+    channel.send(chunk);
+    start += chunkSize;
+    if (i < numChunks - 1) {
+      new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
+// Function to get uploaded materials from the SQLite database
+function getUploadedMaterials() {
   return new Promise((resolve, reject) => {
-    db.all("SELECT fileName FROM uploads", [], (err, rows) => {
+    db.all("SELECT filePath FROM uploads", [], (err, rows) => {
       if (err) {
-        console.error("Error fetching materials from database", err.message);
-        reject(err);
-        return;
+        return reject(err);
       }
-      // Extract filenames from the database result
-      const fileNames = rows.map((row) => row.fileName);
-      resolve(fileNames);
+      const materials = rows.map((row) => row.filePath);
+      resolve(materials);
     });
   });
 }
 
-// Function to split long messages and send in parts
-function splitAndSendMessage(channel, content, limit) {
-  const parts = [];
-  for (let i = 0; i < content.length; i += limit) {
-    parts.push(content.slice(i, i + limit));
-  }
-  parts.forEach((part) => channel.send(part));
-}
-
-// Log in to Discord
+// Login to Discord
 client.login(process.env.TOKEN);
