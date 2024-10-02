@@ -79,10 +79,37 @@ client.on("ready", () => {
   console.log("The bot is online!");
 });
 
-// Handle message creation event
+/// Keep this part to handle normal messages and file uploads
 client.on("messageCreate", async (message) => {
-  // Ignore bot messages
   if (message.author.bot) return;
+  try {
+    // Send typing indicator
+    await message.channel.sendTyping();
+
+    // Simple AI conversation logic for normal messages
+    const response = await axios.post(
+      "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+      {
+        model: "gpt-4", // Or whichever model you are using
+        messages: [
+          { role: "system", content: "You are a helpful assistant." },
+          { role: "user", content: message.content },
+        ],
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.API_KEY}`,
+        },
+      }
+    );
+
+    const content = response.data.choices[0].message.content;
+
+    // Send the AI's response back to the user
+    splitAndSendMessage(message.channel, content, 2000);
+  } catch (error) {
+    console.error(`Error in message handling: ${error.message}`);
+  }
 
   // Handle file uploads
   if (message.attachments.size > 0) {
@@ -142,177 +169,20 @@ client.on("messageCreate", async (message) => {
     return;
   }
 
-  // Handle commands
-  if (message.content.startsWith("/")) {
-    const args = message.content.slice(1).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
-
-    // Command to create a class outline
-    if (command === "createoutline") {
-      const lectureLength = args[0] || "45"; // Default to 45 minutes if not specified
-
-      try {
-        // Fetch uploaded materials from the SQLite database asynchronously
-        const uploadedMaterials = await getUploadedMaterials();
-
-        if (uploadedMaterials.length === 0) {
-          message.reply(
-            "No materials uploaded. Please upload materials before creating an outline."
-          );
-          return;
-        }
-
-        // Call AI to generate a class outline based on materials
-        const response = await axios.post(
-          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-          {
-            model: "gpt-4",
-            messages: [
-              {
-                role: "system",
-                content: `Create a ${lectureLength}-minute class outline using the following materials: ${uploadedMaterials.join(
-                  ", "
-                )}.`,
-              },
-            ],
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.API_KEY}`,
-            },
-          }
-        );
-
-        const content = response.data.choices[0].message.content;
-        lastGeneratedOutlineId = Date.now(); // Store the generated outline
-        splitAndSendMessage(message.channel, content, 2000);
-        db.run(
-          "INSERT INTO generated_outlines (id, name, outline) VALUES (?, ?, ?)",
-          [lastGeneratedOutlineId, "Outline", content],
-          function (err) {
-            if (err) {
-              console.error("Error saving outline to database", err.message);
-              message.reply("Failed to save the generated outline.");
-            } else {
-              splitAndSendMessage(message.channel, content, 2000);
-            }
-          }
-        );
-      } catch (error) {
-        console.error(`Error creating class outline: ${error.message}`);
-        message.reply(
-          "Failed to create class outline. Please try again later."
-        );
-      }
-    }
-    if (command === "save") {
-      const nameArgIndex = args.findIndex((arg) => arg === "name");
-      if (nameArgIndex === -1 || nameArgIndex === args.length - 1) {
-        message.reply(
-          "Please provide a name for the file using the format: /save name <desired_name>"
-        );
-        return;
-      }
-
-      const fileName = args[nameArgIndex + 1];
-      if (!lastGeneratedOutlineId) {
-        message.reply(
-          "No outline available to save. Please create an outline first."
-        );
-        return;
-      }
-
-      db.get(
-        `SELECT outline FROM generated_outlines WHERE id = ?`,
-        [lastGeneratedOutlineId],
-        (err, row) => {
-          if (err) {
-            console.error("Error retrieving generated outline", err.message);
-            message.reply("Failed to retrieve the generated outline.");
-            return;
-          }
-
-          if (!row) {
-            message.reply(
-              "No generated outline found to save. Please generate an outline first."
-            );
-            return;
-          }
-
-          db.run(
-            "INSERT INTO saved_outlines (name, outline) VALUES (?, ?)",
-            [fileName, row.outline],
-            function (err) {
-              if (err) {
-                console.error("Error saving outline to database", err.message);
-                message.reply("Failed to save the outline. Please try again.");
-              } else {
-                db.run(
-                  `DELETE FROM generated_outlines WHERE id = ?`,
-                  [lastGeneratedOutlineId],
-                  (err) => {
-                    if (err) {
-                      console.error(
-                        "Error deleting old generated outline",
-                        err.message
-                      );
-                    }
-                  }
-                );
-                message.reply(
-                  `Outline saved successfully with the name "${fileName}".`
-                );
-              }
-            }
-          );
-        }
-      );
-    }
-    return;
-  }
-
-  // Handle non-command messages
-  // You can add custom logic for different types of non-command messages here.
-  // For example, responding to specific keywords or just echoing back the message.
-  // Handle normal messages (not starting with "/")
-  try {
-    await message.channel.sendTyping(); // Simulate typing indicator
-
-    // Simple AI conversation logic for normal messages
-    const response = await axios.post(
-      "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-      {
-        model: "gpt-4",
-        messages: [
-          { role: "system", content: "You are a friendly chatbot." },
-          { role: "user", content: message.content },
-        ],
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.API_KEY}`,
-        },
-      }
-    );
-
-    const content = response.data.choices[0].message.content;
-    splitAndSendMessage(message.channel, content, 2000);
-  } catch (error) {
-    console.error(`Error in message handling: ${error.message}`);
-  }
+  // Normal message processing, if needed
 });
 
+// Now, let's handle slash commands in the interactionCreate event
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isCommand()) return;
 
   const { commandName, options } = interaction;
 
   try {
-    // Acknowledge the interaction immediately
-    await interaction.deferReply();
+    await interaction.deferReply(); // Acknowledge interaction
 
     if (commandName === "createoutline") {
-      const lectureLength = options.getString("length") || "45";
+      const lectureLength = options.getString("length") || "45"; // Length argument for outline
       const uploadedMaterials = await getUploadedMaterials();
 
       if (uploadedMaterials.length === 0) {
@@ -322,6 +192,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      // Use AI to generate a class outline
       const response = await axios.post(
         "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
         {
@@ -343,28 +214,81 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
 
       const content = response.data.choices[0].message.content;
-      await interaction.editReply(
-        content.length > 2000
-          ? "Response is too long to display in a single message."
-          : content
+
+      db.run(
+        "INSERT INTO generated_outlines (name, outline) VALUES (?, ?)",
+        ["Outline", content],
+        function (err) {
+          if (err) {
+            console.error("Error saving outline to database", err.message);
+            interaction.editReply("Failed to save the generated outline.");
+          } else {
+            lastGeneratedOutlineId = this.lastID; // Store the last generated outline ID
+            splitAndSendMessage(interaction.channel, content, 2000);
+            interaction.editReply("Outline generated and saved.");
+          }
+        }
       );
-      if (content.length > 2000)
-        splitAndSendMessage(interaction.channel, content, 2000);
     }
 
-    if (commandName === "releasematerials") {
-      const materialIds = options
-        .getString("materials")
-        .split(",")
-        .map((id) => id.trim());
+    if (commandName === "save") {
+      const fileName = options.getString("name");
 
-      if (materialIds.length === 0) {
-        await interaction.editReply("Please specify the materials to release.");
+      if (!lastGeneratedOutlineId) {
+        await interaction.editReply(
+          "No outline available to save. Please create an outline first."
+        );
         return;
       }
 
-      await interaction.editReply(
-        `Materials released: ${materialIds.join(", ")}`
+      db.get(
+        `SELECT outline FROM generated_outlines WHERE id = ?`,
+        [lastGeneratedOutlineId],
+        (err, row) => {
+          if (err) {
+            console.error("Error retrieving generated outline", err.message);
+            interaction.editReply("Failed to retrieve the generated outline.");
+            return;
+          }
+
+          if (!row) {
+            interaction.editReply(
+              "No generated outline found to save. Please generate an outline first."
+            );
+            return;
+          }
+
+          // Insert into saved_outlines
+          db.run(
+            "INSERT INTO saved_outlines (name, outline) VALUES (?, ?)",
+            [fileName, row.outline],
+            function (err) {
+              if (err) {
+                console.error("Error saving outline to database", err.message);
+                interaction.editReply(
+                  "Failed to save the outline. Please try again."
+                );
+              } else {
+                // Successfully saved, now delete the outline from generated_outlines
+                db.run(
+                  `DELETE FROM generated_outlines WHERE id = ?`,
+                  [lastGeneratedOutlineId],
+                  (err) => {
+                    if (err) {
+                      console.error(
+                        "Error deleting old generated outline",
+                        err.message
+                      );
+                    }
+                  }
+                );
+                interaction.editReply(
+                  `Outline saved successfully with the name "${fileName}".`
+                );
+              }
+            }
+          );
+        }
       );
     }
   } catch (error) {
@@ -374,9 +298,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     );
   }
 });
+
 // Function to split and send long messages
 function splitAndSendMessage(channel, content, delay) {
-  const chunkSize = 2000; // Max message length
+  const chunkSize = 2000;
   const numChunks = Math.ceil(content.length / chunkSize);
   let start = 0;
 
