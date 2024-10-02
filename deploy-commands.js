@@ -58,6 +58,11 @@ const commands = [
       },
     ],
   },
+  {
+    name: "createpowerpoint", // Add new command here
+    description:
+      "Create a PowerPoint presentation from saved outlines and materials",
+  },
 ];
 
 (async () => {

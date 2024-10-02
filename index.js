@@ -4,6 +4,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
+const PptxGenJS = require("pptxgenjs");
 
 const db = new sqlite3.Database("./uploads.db", (err) => {
   if (err) {
@@ -297,6 +298,46 @@ client.on(Events.InteractionCreate, async (interaction) => {
       "An error occurred while processing your request."
     );
   }
+
+  if (commandName === "createpowerpoint") {
+    // Retrieve saved outlines and uploaded materials
+    const savedOutlines = await getSavedOutlines();
+    const uploadedMaterials = await getUploadedMaterials();
+
+    if (savedOutlines.length === 0) {
+      await interaction.editReply("No saved outlines found.");
+      return;
+    }
+
+    if (uploadedMaterials.length === 0) {
+      await interaction.editReply("No uploaded materials found.");
+      return;
+    }
+
+    const pptx = new PptxGenJS();
+    const slide = pptx.addSlide();
+
+    // Add title to slide
+    slide.addText("Class Outline", { x: 1, y: 0.5, fontSize: 24 });
+
+    // Add outline and materials to slide
+    slide.addText(savedOutlines[0].outline, { x: 1, y: 1, fontSize: 18 });
+    slide.addText("Materials:", { x: 1, y: 2, fontSize: 20 });
+
+    uploadedMaterials.forEach((material, index) => {
+      slide.addText(material, { x: 1, y: 2.5 + index * 0.5, fontSize: 16 });
+    });
+
+    // Save the PowerPoint file
+    const pptxFile = `./uploads/class_outline_${Date.now()}.pptx`;
+    await pptx.writeFile({ fileName: pptxFile });
+
+    // Send file back to the user
+    await interaction.editReply({
+      content: "PowerPoint created successfully!",
+      files: [pptxFile],
+    });
+  }
 });
 
 // Function to split and send long messages
@@ -314,7 +355,21 @@ function splitAndSendMessage(channel, content, delay) {
     }
   }
 }
-
+// Function to retrieve saved outlines
+function getSavedOutlines() {
+  return new Promise((resolve, reject) => {
+    db.all(
+      "SELECT * FROM saved_outlines ORDER BY createdAt DESC LIMIT 1",
+      [],
+      (err, rows) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve(rows);
+      }
+    );
+  });
+}
 // Function to get uploaded materials from the SQLite database
 function getUploadedMaterials() {
   return new Promise((resolve, reject) => {
