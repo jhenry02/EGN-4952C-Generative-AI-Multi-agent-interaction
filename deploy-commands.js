@@ -59,9 +59,8 @@ const commands = [
     ],
   },
   {
-    name: "createpowerpoint", // Add new command here
-    description:
-      "Create a PowerPoint presentation from saved outlines and materials",
+    name: "createslide",
+    description: "Create a slide with the outline and uploaded materials.",
   },
 ];
 

@@ -4,7 +4,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
-const PptxGenJS = require("pptxgenjs");
+const { createSlideImage } = require("./canva.js");
 
 const db = new sqlite3.Database("./uploads.db", (err) => {
   if (err) {
@@ -104,8 +104,16 @@ client.on("messageCreate", async (message) => {
       }
     );
 
-    const content = response.data.choices[0].message.content;
+    // Log the entire response
+    console.log("Full AI Response:", response.data);
 
+    const content = response.data.choices[0]?.message?.content;
+    if (content) {
+      console.log("AI Response Content:", content);
+      splitAndSendMessage(message.channel, content, 2000);
+    } else {
+      console.error("No content in AI response");
+    }
     // Send the AI's response back to the user
     splitAndSendMessage(message.channel, content, 2000);
   } catch (error) {
@@ -299,10 +307,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     );
   }
 
-  if (commandName === "createpowerpoint") {
+  //M1 content (code)
+  if (commandName === "createslide") {
     // Retrieve saved outlines and uploaded materials
     const savedOutlines = await getSavedOutlines();
     const uploadedMaterials = await getUploadedMaterials();
+    console.log("Uploaded Materials:", uploadedMaterials);
 
     if (savedOutlines.length === 0) {
       await interaction.editReply("No saved outlines found.");
@@ -314,47 +324,102 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    const pptx = new PptxGenJS();
-    const slide = pptx.addSlide();
+    const outlineContent = savedOutlines[0].outline;
 
-    // Add title to slide
-    slide.addText("Class Outline", { x: 1, y: 0.5, fontSize: 24 });
+    // Split the outline into sections
+    const sections = outlineContent
+      .split(/\n(V\.|IV\.|III\.|II\.|I\.)/)
+      .filter(Boolean);
 
-    // Add outline and materials to slide
-    slide.addText(savedOutlines[0].outline, { x: 1, y: 1, fontSize: 18 });
-    slide.addText("Materials:", { x: 1, y: 2, fontSize: 20 });
+    for (let i = 0; i < sections.length; i++) {
+      const sectionHeader = sections[i].trim();
+      const sectionContent = sections[i + 1]?.trim() || "";
+      const generatedContent = sections[i].content;
+      // Step 1: Generate the slide image
+      const slideImage = await createSlideImage(
+        `${sectionHeader}\n\n${generatedContent}`,
+        uploadedMaterials
+      );
 
-    uploadedMaterials.forEach((material, index) => {
-      slide.addText(material, { x: 1, y: 2.5 + index * 0.5, fontSize: 16 });
-    });
+      // Step 2: Convert the slide image to a buffer
+      const buffer = await slideImage.toBuffer();
 
-    // Save the PowerPoint file
-    const pptxFile = `./uploads/class_outline_${Date.now()}.pptx`;
-    await pptx.writeFile({ fileName: pptxFile });
+      // Step 3: Verify that the buffer is valid and save it
+      if (buffer && buffer.length > 0) {
+        const imagePath = `./uploads/slide_${Date.now()}_${i}.png`;
+        fs.writeFileSync(imagePath, buffer);
 
-    // Send file back to the user
-    await interaction.editReply({
-      content: "PowerPoint created successfully!",
-      files: [pptxFile],
-    });
+        // Step 4: Log the successful save and send the image
+        console.log(`Slide image saved at: ${imagePath}`);
+        await interaction.followUp({
+          content: `Slide for section "${sectionHeader}" generated successfully!`,
+          files: [imagePath],
+        });
+      } else {
+        // Handle the error if image generation fails
+        console.error("Failed to generate a valid image buffer.");
+        await interaction.followUp(
+          `Failed to generate slide for section "${sectionHeader}".`
+        );
+      }
+
+      try {
+        let lectureLength = 45;
+
+        // Generate content based on the uploaded materials
+        const generatedContent = await generateContentFromMaterials(
+          uploadedMaterials,
+          sectionHeader,
+          sectionContent
+        );
+
+        // Create slide image based on the outline and generated content
+        const slideImage = await createSlideImage(
+          `${sectionHeader}\n\n${generatedContent}`,
+          uploadedMaterials
+        );
+
+        // Save image locally
+        const imagePath = `./uploads/slide_${Date.now()}_${i}.png`;
+        const buffer = await slideImage.toBuffer();
+        fs.writeFileSync(imagePath, buffer);
+
+        // Send each image as a separate message
+        await interaction.followUp({
+          content: `Slide for section "${sectionHeader}" generated successfully!`,
+          files: [imagePath],
+        });
+      } catch (error) {
+        console.error(
+          `Error generating slide for section "${sectionHeader}": ${error.message}`
+        );
+        await interaction.followUp(
+          `Failed to generate slide for section "${sectionHeader}".`
+        );
+      }
+    }
+
+    await interaction.editReply("All slides generated successfully.");
   }
 });
 
 // Function to split and send long messages
-function splitAndSendMessage(channel, content, delay) {
+// Function to split and send long messages
+async function splitAndSendMessage(channel, content, delay) {
   const chunkSize = 2000;
   const numChunks = Math.ceil(content.length / chunkSize);
   let start = 0;
 
   for (let i = 0; i < numChunks; i++) {
     const chunk = content.substring(start, start + chunkSize);
-    channel.send(chunk);
+    await channel.send(chunk); // Await the send operation
     start += chunkSize;
     if (i < numChunks - 1) {
-      new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay)); // Await the delay
     }
   }
 }
+
 // Function to retrieve saved outlines
 function getSavedOutlines() {
   return new Promise((resolve, reject) => {
@@ -375,13 +440,123 @@ function getUploadedMaterials() {
   return new Promise((resolve, reject) => {
     db.all("SELECT filePath FROM uploads", [], (err, rows) => {
       if (err) {
+        console.error("Error retrieving uploaded materials:", err.message);
         return reject(err);
       }
+      console.log("Uploaded Materials from DB:", rows); // Add this log to debug
+      resolve(rows.map((row) => row.filePath)); // Ensure
       const materials = rows.map((row) => row.filePath);
       resolve(materials);
     });
   });
 }
+async function generateContentFromMaterials(uploadedMaterials, sectionHeader) {
+  const contentArray = [];
+
+  // Read each material file and store its content
+  for (const material of uploadedMaterials) {
+    if (typeof material !== "string") {
+      console.error(`Invalid material path: ${material}`);
+      continue; // Skip this iteration if the material is not a string
+    }
+    try {
+      const data = fs.readFileSync(material, "utf-8"); // Ensure 'material' is a valid path
+      contentArray.push(data);
+    } catch (err) {
+      console.error(`Error reading material ${material}: ${err.message}`);
+    }
+  }
+
+  // Combine the content of all materials
+  let sectionContent = contentArray.join("\n");
+  // Handle content length to avoid 413 error
+  const MAX_CONTENT_LENGTH = 4000; // Adjust based on the API's limit
+  if (sectionContent.length > MAX_CONTENT_LENGTH) {
+    sectionContent = sectionContent.substring(0, MAX_CONTENT_LENGTH);
+    return sectionContent; // Truncate if necessary
+  }
+
+  // Return the processed section content
+
+  // Initialize an array to hold generated contents
+  const generatedContents = [];
+
+  for (const contentSection of contentSections) {
+    try {
+      // Prepare the payload for the Trussed API
+      const payload = {
+        model: "gpt-4", // Adjust the model as needed
+        messages: [
+          {
+            role: "system",
+            content: `Create a ${lectureLength}-minute class outline using the following materials: ${uploadedMaterials.join(
+              ", "
+            )}.`,
+          },
+        ],
+      };
+      console.log("Payload being sent:", JSON.stringify(payload));
+      // Make the API call to Trussed
+      const response = await axios.post(
+        "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.TRUSSED_API_KEY}`, // Ensure you have the correct API key in your environment variable
+            "Content-Type": "application/json", // Specify the content type
+          },
+        }
+      );
+
+      // Extract content from the API response
+      const generatedContent = response.data.choices[0].message.content;
+      generatedContents.push(generatedContent);
+      console.log("AI Response Content:", content);
+    } catch (error) {
+      console.error(
+        `Error generating content from materials: ${error.message}`
+      );
+      throw new Error("Failed to generate content from materials.");
+    }
+  }
+
+  // Return the concatenated results of all sections
+  return generatedContents.join("\n");
+}
+function splitContent(content, maxLength) {
+  const sections = [];
+  let currentSection = "";
+
+  const words = content.split(" "); // Split by spaces to maintain whole words
+
+  for (const word of words) {
+    if ((currentSection + word).length + 100 <= maxLength) {
+      // Add a buffer of 100 characters
+      currentSection += `${word} `;
+    } else {
+      sections.push(currentSection.trim());
+      currentSection = `${word} `;
+    }
+  }
+  if (currentSection) sections.push(currentSection.trim());
+
+  return sections;
+}
+const extractTextFromFiles = async (filePaths) => {
+  let allText = [];
+  for (const filePath of filePaths) {
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext === ".pdf") {
+      const text = await extractTextFromPDF(filePath); // Implement PDF text extraction
+      allText.push(text);
+    } else {
+      // Handle other file types (e.g., .txt, .docx, etc.)
+      const text = fs.readFileSync(filePath, "utf8"); // Example for .txt files
+      allText.push(text);
+    }
+  }
+  return allText.join(" ");
+};
 
 // Login to Discord
 client.login(process.env.TOKEN);
