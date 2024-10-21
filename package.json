@@ -1,14 +1,4 @@
 {
-  "name": "egn-4952c-generative-ai-multi-agent-interaction",
-  "version": "1.0.0",
-  "description": "An intriguing software engineering solution created by a group of bright and intellectual students that attend Florida Atlantic University",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "@discordjs/rest": "^2.4.0",
     "axios": "^1.7.7",

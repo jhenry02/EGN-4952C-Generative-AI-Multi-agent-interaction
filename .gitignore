@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 node_modules/.bin/color-support
 node_modules/.bin/image-size
 node_modules/.bin/mkdirp
@@ -25,3 +26,12 @@ node_modules/semver/bin/semver.js
 node_modules/sqlite3/build/Release/node_sqlite3.node
 node_modules/which/bin/node-which
 node_modules/xml-js/bin/cli.js
+=======
+# Ignore environment variables
+
+.env
+
+# Ignore node modules
+
+node_modules/
+>>>>>>> c2a73c84988af937b2823b11f43641389cb6270c
