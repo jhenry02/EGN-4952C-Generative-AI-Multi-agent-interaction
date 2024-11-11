@@ -4,8 +4,10 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
+const PDFParser = require("pdf2json");
 const { createSlideImage } = require("./canva.js");
 
+// Insert file info into the SQLite database
 const db = new sqlite3.Database("./uploads.db", (err) => {
   if (err) {
     console.error("Error opening database " + err.message);
@@ -20,6 +22,7 @@ db.run(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     fileName TEXT,
     filePath TEXT,
+    extractedText TEXT,
     uploadedAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )`,
   (err) => {
@@ -121,6 +124,7 @@ client.on("messageCreate", async (message) => {
   }
 
   // Handle file uploads
+  // Handle file uploads
   if (message.attachments.size > 0) {
     message.attachments.forEach(async (attachment) => {
       const fileUrl = attachment.url;
@@ -162,6 +166,51 @@ client.on("messageCreate", async (message) => {
               console.log(
                 `File "${fileName}" stored at "${filePath}" with ID ${this.lastID}`
               );
+
+              // Text extraction logic
+              let rawText = null;
+              if (path.extname(fileName).toLowerCase() === ".pdf") {
+                console.log("PDF detected");
+
+                const pdfParser = new PDFParser(this, 1);
+
+                pdfParser.on("pdfParser_dataError", (errData) => {
+                  console.error(errData.parserError);
+                });
+
+                pdfParser.on("pdfParser_dataReady", (pdfData) => {
+                  rawText = pdfParser.getRawTextContent();
+
+                  // Truncate the text if it exceeds the maximum character limit
+                  const maxCharLimit = 3000;
+                  if (rawText.length > maxCharLimit) {
+                    console.log(
+                      `Text exceeds the maximum character limit of ${maxCharLimit}. Truncating...`
+                    );
+                    rawText = rawText.slice(0, maxCharLimit); // Truncate text to maxCharLimit characters
+                  }
+                  console.log(rawText);
+
+                  // Add the rawText to the extractedText field of the most recent entry in the database
+                  db.run(
+                    `UPDATE uploads SET extractedText = ? WHERE id = ?`,
+                    [rawText, this.lastID],
+                    function (err) {
+                      if (err) {
+                        return console.error(
+                          "Error updating extracted text in database",
+                          err.message
+                        );
+                      }
+                      console.log(
+                        `Updated extractedText for entry with ID ${this.lastID}`
+                      );
+                    }
+                  );
+                });
+
+                pdfParser.loadPDF(filePath);
+              }
             }
           );
         });
@@ -177,8 +226,6 @@ client.on("messageCreate", async (message) => {
     });
     return;
   }
-
-  // Normal message processing, if needed
 });
 
 // Now, let's handle slash commands in the interactionCreate event
@@ -209,9 +256,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           messages: [
             {
               role: "system",
-              content: `Create a ${lectureLength}-minute class outline using the following materials: ${uploadedMaterials.join(
+              content: `Create a detailed, lecture-ready outline for a ${lectureLength}-minute class on the topic "${uploadedMaterials.join(
                 ", "
-              )}.`,
+              )}". For each section, provide a complete explanation with clear definitions, examples, and the importance of each concept. Do not leave any section unfinished or vague. The outline should be ready to present with a full discussion of the topic.`,
             },
           ],
         },
@@ -333,9 +380,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     for (let i = 0; i < sections.length; i++) {
       const sectionHeader = sections[i].trim();
-      const sectionContent = sections[i + 1]?.trim() || "";
-      const generatedContent = sections[i].content;
-      // Step 1: Generate the slide image
+      const generatedContent = await generateContentFromMaterials(
+        uploadedMaterials,
+        sectionHeader
+      );
+
       const slideImage = await createSlideImage(
         `${sectionHeader}\n\n${generatedContent}`,
         uploadedMaterials
@@ -438,91 +487,87 @@ function getSavedOutlines() {
 // Function to get uploaded materials from the SQLite database
 function getUploadedMaterials() {
   return new Promise((resolve, reject) => {
-    db.all("SELECT filePath FROM uploads", [], (err, rows) => {
+    db.all("SELECT extractedText FROM uploads", [], (err, rows) => {
       if (err) {
         console.error("Error retrieving uploaded materials:", err.message);
         return reject(err);
       }
-      console.log("Uploaded Materials from DB:", rows); // Add this log to debug
-      resolve(rows.map((row) => row.filePath)); // Ensure
-      const materials = rows.map((row) => row.filePath);
+      const materials = rows.map((row) => row.extractedText).filter(Boolean);
       resolve(materials);
     });
   });
 }
-async function generateContentFromMaterials(uploadedMaterials, sectionHeader) {
-  const contentArray = [];
 
-  // Read each material file and store its content
-  for (const material of uploadedMaterials) {
-    if (typeof material !== "string") {
-      console.error(`Invalid material path: ${material}`);
-      continue; // Skip this iteration if the material is not a string
-    }
-    try {
-      const data = fs.readFileSync(material, "utf-8"); // Ensure 'material' is a valid path
-      contentArray.push(data);
-    } catch (err) {
-      console.error(`Error reading material ${material}: ${err.message}`);
-    }
-  }
+async function generateContentFromMaterials(
+  uploadedMaterials,
+  sectionHeader,
+  lectureLength
+) {
+  const contentArray = uploadedMaterials; // Already contains extracted text
 
-  // Combine the content of all materials
+  // Debug: Check combined content from materials
+  console.log("Combined Material Content:", contentArray);
+
+  // Handle content length to avoid API errors
+  const MAX_CONTENT_LENGTH = 4000;
   let sectionContent = contentArray.join("\n");
-  // Handle content length to avoid 413 error
-  const MAX_CONTENT_LENGTH = 4000; // Adjust based on the API's limit
+
   if (sectionContent.length > MAX_CONTENT_LENGTH) {
-    sectionContent = sectionContent.substring(0, MAX_CONTENT_LENGTH);
-    return sectionContent; // Truncate if necessary
+    sectionContent = sectionContent.substring(0, MAX_CONTENT_LENGTH); // Truncate if too long
   }
 
-  // Return the processed section content
+  // Debug: Check the combined section content
+  console.log("Combined Section Content:", sectionContent);
 
-  // Initialize an array to hold generated contents
+  // Initialize an array to hold generated content for each section
   const generatedContents = [];
+  // const contentSections = [];
 
   for (const contentSection of contentSections) {
     try {
-      // Prepare the payload for the Trussed API
       const payload = {
-        model: "gpt-4", // Adjust the model as needed
+        model: "gpt-4",
         messages: [
           {
             role: "system",
-            content: `Create a ${lectureLength}-minute class outline using the following materials: ${uploadedMaterials.join(
-              ", "
-            )}.`,
+            content: `Create a detailed ${lectureLength}-minute ${generatedContent} section for the lecture on "${sectionHeader}". Use the materials provided. Include definitions, examples, and detailed explanations relevant to this section. Please give out information.`,
+          },
+          {
+            role: "user",
+            content: sectionContent, // Combined content from materials
           },
         ],
       };
+
       console.log("Payload being sent:", JSON.stringify(payload));
-      // Make the API call to Trussed
+
+      // Make the API call
       const response = await axios.post(
         "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
         payload,
         {
           headers: {
-            Authorization: `Bearer ${process.env.TRUSSED_API_KEY}`, // Ensure you have the correct API key in your environment variable
-            "Content-Type": "application/json", // Specify the content type
+            Authorization: `Bearer ${process.env.API_KEY}`,
+            "Content-Type": "application/json",
           },
         }
       );
-
-      // Extract content from the API response
+      // Extract and store content from the API response
       const generatedContent = response.data.choices[0].message.content;
       generatedContents.push(generatedContent);
-      console.log("AI Response Content:", content);
+      console.log("AI Response Content:", generatedContent);
     } catch (error) {
       console.error(
-        `Error generating content from materials: ${error.message}`
+        `Error generating content for ${contentSection}: ${error.message}`
       );
-      throw new Error("Failed to generate content from materials.");
+      throw new Error(`Failed to generate content for ${contentSection}.`);
     }
   }
 
-  // Return the concatenated results of all sections
+  // Return all generated content concatenated as a single string
   return generatedContents.join("\n");
 }
+
 function splitContent(content, maxLength) {
   const sections = [];
   let currentSection = "";

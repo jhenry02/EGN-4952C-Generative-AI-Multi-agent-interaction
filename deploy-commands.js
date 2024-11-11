@@ -62,6 +62,10 @@ const commands = [
     name: "createslide",
     description: "Create a slide with the outline and uploaded materials.",
   },
+  {
+    name: "creatematerials", // New command to generate materials
+    description: "Generate materials based on uploaded content",
+  },
 ];
 
 (async () => {
