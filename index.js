@@ -256,9 +256,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
           messages: [
             {
               role: "system",
-              content: `Create a detailed, lecture-ready outline for a ${lectureLength}-minute class on the topic "${uploadedMaterials.join(
-                ", "
-              )}". For each section, provide a complete explanation with clear definitions, examples, and the importance of each concept. Do not leave any section unfinished or vague. The outline should be ready to present with a full discussion of the topic.`,
+              content: `Create a highly detailed, lecture-ready outline for a ${lectureLength}-minute class on the topic "${uploadedMaterials.join(", ")}". 
+                        For each main section, include the following:
+                        1. A clear and concise definition or explanation of the concept.
+                        2. Real-world applications or examples that illustrate the concept.
+                        3. Detailed steps or methodologies if applicable.
+                        4. Key subtopics or subheadings under each main section.
+                        5. Important takeaways or key points to remember.
+                        Do not describe an outline, directly state the concepts, not a description of which concepts to use. The response should avoid vagueness and provide sufficient depth for each concept so that it is fully explained. Each main section should contain at least 5 sentences with additional examples and details to enhance comprehension.`,
             },
           ],
         },
