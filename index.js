@@ -11,6 +11,7 @@ const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 const PDFParser = require("pdf2json");
 const { createSlide, nextSlide, previousSlide } = require("./canva.js");
+const cheerio = require("cheerio");
 
 // Insert file info into the SQLite database
 const db = new sqlite3.Database("./uploads.db", (err) => {
@@ -131,6 +132,24 @@ client.on("messageCreate", async (message) => {
     splitAndSendMessage(message.channel, content, 2000);
   } catch (error) {
     console.error(`Error in message handling: ${error.message}`);
+  }
+
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const urls = message.content.match(urlRegex);
+
+  if (urls) {
+    for (const url of urls) {
+      const content = await extractTextFromWebpage(url);
+      if (content) {
+        try {
+          await saveWebpageContent(url, content);
+          await message.reply(`Content from ${url} has been saved and can now be used for creating outlines.`);
+        } catch (error) {
+          console.error(`Error saving content from ${url}: ${error.message}`);
+          await message.reply(`Failed to save content from ${url}.`);
+        }
+      }
+    }
   }
 
   // Handle file uploads
@@ -601,6 +620,38 @@ const extractTextFromFiles = async (filePaths) => {
   }
   return allText.join(" ");
 };
+
+async function extractTextFromWebpage(url) {
+  try {
+    const response = await axios.get(url);
+    const $ = cheerio.load(response.data);
+
+    // Remove script and style elements
+    $('script, style').remove();
+
+    // Get the text from the body
+    return $('body').text().trim().replace(/\s+/g, ' ');
+  } catch (error) {
+    console.error(`Error extracting text from ${url}: ${error.message}`);
+    return null;
+  }
+}
+
+function saveWebpageContent(url, content) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `INSERT INTO uploads (fileName, filePath, extractedText) VALUES (?, ?, ?)`,
+      [url, url, content],
+      function (err) {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(this.lastID);
+        }
+      }
+    );
+  });
+}
 
 // Login to Discord
 client.login(process.env.TOKEN);
