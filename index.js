@@ -1,11 +1,16 @@
 require("dotenv").config();
-const { Client, IntentsBitField, Events } = require("discord.js");
+const {
+  Client,
+  IntentsBitField,
+  Events,
+  GatewayIntentBits,
+} = require("discord.js");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 const PDFParser = require("pdf2json");
-const { createSlideImage } = require("./canva.js");
+const { createSlide, nextSlide, previousSlide } = require("./canva.js");
 
 // Insert file info into the SQLite database
 const db = new sqlite3.Database("./uploads.db", (err) => {
@@ -73,6 +78,10 @@ const client = new Client({
     IntentsBitField.Flags.GuildMessages,
     IntentsBitField.Flags.MessageContent,
     IntentsBitField.Flags.GuildMessageReactions,
+
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
   ],
 });
 
@@ -106,6 +115,7 @@ client.on("messageCreate", async (message) => {
         },
       }
     );
+    // Check for next, back, and loadoutline commands
 
     // Log the entire response
     console.log("Full AI Response:", response.data);
@@ -238,119 +248,200 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.deferReply(); // Acknowledge interaction
 
     if (commandName === "createoutline") {
-      const lectureLength = options.getString("length") || "45"; // Length argument for outline
-      const uploadedMaterials = await getUploadedMaterials();
+      try {
+        const lectureLength = options.getString("length") || "45";
+        const uploadedMaterials = await getUploadedMaterials();
 
-      if (uploadedMaterials.length === 0) {
-        await interaction.editReply(
-          "No materials uploaded. Please upload materials before creating an outline."
-        );
-        return;
-      }
+        if (uploadedMaterials.length === 0) {
+          await interaction.editReply(
+            "No materials uploaded. Please upload materials before creating an outline."
+          );
+          return;
+        }
 
-      // Use AI to generate a class outline
-      const response = await axios.post(
-        "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-        {
-          model: "gpt-4",
-          messages: [
-            {
-              role: "system",
-              content: `Create a highly detailed, lecture-ready outline for a ${lectureLength}-minute class on the topic "${uploadedMaterials.join(", ")}". 
-                        For each main section, include the following:
+        const response = await axios.post(
+          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+          {
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: `Create a highly detailed, lecture-ready outline for a ${lectureLength}-minute class on the topic "${uploadedMaterials.join(
+                  ", "
+                )}". For each main section, include the following:
                         1. A clear and concise definition or explanation of the concept.
                         2. Real-world applications or examples that illustrate the concept.
                         3. Detailed steps or methodologies if applicable.
                         4. Key subtopics or subheadings under each main section.
                         5. Important takeaways or key points to remember.
                         Do not describe an outline, directly state the concepts, not a description of which concepts to use. The response should avoid vagueness and provide sufficient depth for each concept so that it is fully explained. Each main section should contain at least 5 sentences with additional examples and details to enhance comprehension.`,
-            },
-          ],
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.API_KEY}`,
+              },
+            ],
           },
-        }
-      );
-
-      const content = response.data.choices[0].message.content;
-
-      db.run(
-        "INSERT INTO generated_outlines (name, outline) VALUES (?, ?)",
-        ["Outline", content],
-        function (err) {
-          if (err) {
-            console.error("Error saving outline to database", err.message);
-            interaction.editReply("Failed to save the generated outline.");
-          } else {
-            lastGeneratedOutlineId = this.lastID; // Store the last generated outline ID
-            splitAndSendMessage(interaction.channel, content, 2000);
-            interaction.editReply("Outline generated and saved.");
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.API_KEY}`,
+            },
           }
-        }
-      );
-    }
-
-    if (commandName === "save") {
-      const fileName = options.getString("name");
-
-      if (!lastGeneratedOutlineId) {
-        await interaction.editReply(
-          "No outline available to save. Please create an outline first."
         );
-        return;
-      }
 
-      db.get(
-        `SELECT outline FROM generated_outlines WHERE id = ?`,
-        [lastGeneratedOutlineId],
-        (err, row) => {
-          if (err) {
-            console.error("Error retrieving generated outline", err.message);
-            interaction.editReply("Failed to retrieve the generated outline.");
-            return;
-          }
+        const content = response.data.choices[0].message.content;
 
-          if (!row) {
-            interaction.editReply(
-              "No generated outline found to save. Please generate an outline first."
-            );
-            return;
-          }
-
-          // Insert into saved_outlines
-          db.run(
-            "INSERT INTO saved_outlines (name, outline) VALUES (?, ?)",
-            [fileName, row.outline],
-            function (err) {
-              if (err) {
-                console.error("Error saving outline to database", err.message);
-                interaction.editReply(
-                  "Failed to save the outline. Please try again."
-                );
-              } else {
-                // Successfully saved, now delete the outline from generated_outlines
-                db.run(
-                  `DELETE FROM generated_outlines WHERE id = ?`,
-                  [lastGeneratedOutlineId],
-                  (err) => {
-                    if (err) {
-                      console.error(
-                        "Error deleting old generated outline",
-                        err.message
-                      );
-                    }
-                  }
-                );
-                interaction.editReply(
-                  `Outline saved successfully with the name "${fileName}".`
-                );
-              }
+        db.run(
+          "INSERT INTO generated_outlines (name, outline) VALUES (?, ?)",
+          ["Outline", content],
+          function (err) {
+            if (err) {
+              console.error("Error saving outline to database", err.message);
+              interaction.editReply("Failed to save the generated outline.");
+            } else {
+              lastGeneratedOutlineId = this.lastID;
+              splitAndSendMessage(interaction.channel, content, 2000);
+              interaction.editReply("Outline generated and saved.");
             }
+          }
+        );
+      } catch (error) {
+        console.error(`Error in createoutline command: ${error.message}`);
+        await interaction.editReply(
+          "An error occurred while creating the outline."
+        );
+      }
+    } else if (commandName === "save") {
+      try {
+        const fileName = options.getString("name");
+
+        if (!lastGeneratedOutlineId) {
+          await interaction.editReply(
+            "No outline available to save. Please create an outline first."
           );
+          return;
         }
-      );
+
+        db.get(
+          `SELECT outline FROM generated_outlines WHERE id = ?`,
+          [lastGeneratedOutlineId],
+          (err, row) => {
+            if (err) {
+              console.error("Error retrieving generated outline", err.message);
+              interaction.editReply(
+                "Failed to retrieve the generated outline."
+              );
+              return;
+            }
+
+            if (!row) {
+              interaction.editReply(
+                "No generated outline found to save. Please generate an outline first."
+              );
+              return;
+            }
+
+            db.run(
+              "INSERT INTO saved_outlines (name, outline) VALUES (?, ?)",
+              [fileName, row.outline],
+              function (err) {
+                if (err) {
+                  console.error(
+                    "Error saving outline to database",
+                    err.message
+                  );
+                  interaction.editReply(
+                    "Failed to save the outline. Please try again."
+                  );
+                } else {
+                  db.run(
+                    `DELETE FROM generated_outlines WHERE id = ?`,
+                    [lastGeneratedOutlineId],
+                    (err) => {
+                      if (err) {
+                        console.error(
+                          "Error deleting old generated outline",
+                          err.message
+                        );
+                      }
+                    }
+                  );
+                  interaction.editReply(
+                    `Outline saved successfully with the name "${fileName}".`
+                  );
+                }
+              }
+            );
+          }
+        );
+      } catch (error) {
+        console.error(`Error in save command: ${error.message}`);
+        await interaction.editReply(
+          "An error occurred while saving the outline."
+        );
+      }
+    } else if (commandName === "createslide") {
+      try {
+        const savedOutlines = await getSavedOutlines();
+
+        if (savedOutlines.length === 0) {
+          await interaction.editReply("No saved outlines found.");
+          return;
+        }
+
+        const outlineContent = savedOutlines[0].outline;
+        const uploadedMaterials = await getUploadedMaterials();
+
+        const slideFilePath = await createSlide(
+          outlineContent,
+          uploadedMaterials
+        );
+
+        if (!fs.existsSync(slideFilePath)) {
+          throw new Error("Slide image was not created.");
+        }
+
+        await interaction.followUp({
+          content: "Here is your generated slide!",
+          files: [{ attachment: slideFilePath, name: "slide_image.png" }],
+        });
+      } catch (error) {
+        console.error("Error generating slide:", error);
+        await interaction.followUp("Failed to generate slide.");
+      }
+    } else if (commandName === "next") {
+      try {
+        const savedOutlines = await getSavedOutlines();
+        if (savedOutlines.length === 0) {
+          await interaction.editReply("No saved outlines found.");
+          return;
+        }
+
+        const outlineContent = savedOutlines[0].outline;
+        const imagePath = await nextSlide(outlineContent, interaction.user.id);
+
+        // Use followUp for the second message to avoid InteractionAlreadyReplied error
+        await interaction.followUp({ files: [{ attachment: imagePath }] });
+      } catch (error) {
+        console.error("Error going to next slide:", error);
+        await interaction.editReply("Failed to go to the next slide.");
+      }
+    } else if (commandName === "back") {
+      try {
+        const savedOutlines = await getSavedOutlines();
+        if (savedOutlines.length === 0) {
+          await interaction.editReply("No saved outlines found.");
+          return;
+        }
+
+        const outlineContent = savedOutlines[0].outline;
+        const imagePath = await previousSlide(
+          outlineContent,
+          interaction.user.id
+        );
+
+        // Use followUp for the second message to avoid InteractionAlreadyReplied error
+        await interaction.followUp({ files: [{ attachment: imagePath }] });
+      } catch (error) {
+        console.error("Error going to previous slide:", error);
+        await interaction.editReply("Failed to go to the previous slide.");
+      }
     }
   } catch (error) {
     console.error(`Error handling interaction: ${error.message}`);
@@ -358,109 +449,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       "An error occurred while processing your request."
     );
   }
-
-  //M1 content (code)
-  if (commandName === "createslide") {
-    // Retrieve saved outlines and uploaded materials
-    const savedOutlines = await getSavedOutlines();
-    const uploadedMaterials = await getUploadedMaterials();
-    console.log("Uploaded Materials:", uploadedMaterials);
-
-    if (savedOutlines.length === 0) {
-      await interaction.editReply("No saved outlines found.");
-      return;
-    }
-
-    if (uploadedMaterials.length === 0) {
-      await interaction.editReply("No uploaded materials found.");
-      return;
-    }
-
-    const outlineContent = savedOutlines[0].outline;
-
-    // Split the outline into sections
-    const sections = outlineContent
-      .split(/\n(V\.|IV\.|III\.|II\.|I\.)/)
-      .filter(Boolean);
-
-    for (let i = 0; i < sections.length; i++) {
-      const sectionHeader = sections[i].trim();
-      const generatedContent = await generateContentFromMaterials(
-        uploadedMaterials,
-        sectionHeader
-      );
-
-      const slideImage = await createSlideImage(
-        `${sectionHeader}\n\n${generatedContent}`,
-        uploadedMaterials
-      );
-
-      // Step 2: Convert the slide image to a buffer
-      const buffer = await slideImage.toBuffer();
-
-      // Step 3: Verify that the buffer is valid and save it
-      if (buffer && buffer.length > 0) {
-        const imagePath = `./uploads/slide_${Date.now()}_${i}.png`;
-        fs.writeFileSync(imagePath, buffer);
-
-        // Step 4: Log the successful save and send the image
-        console.log(`Slide image saved at: ${imagePath}`);
-        await interaction.followUp({
-          content: `Slide for section "${sectionHeader}" generated successfully!`,
-          files: [imagePath],
-        });
-      } else {
-        // Handle the error if image generation fails
-        console.error("Failed to generate a valid image buffer.");
-        await interaction.followUp(
-          `Failed to generate slide for section "${sectionHeader}".`
-        );
-      }
-
-      try {
-        let lectureLength = 45;
-
-        // Generate content based on the uploaded materials
-        const generatedContent = await generateContentFromMaterials(
-          uploadedMaterials,
-          sectionHeader,
-          sectionContent
-        );
-
-        // Create slide image based on the outline and generated content
-        const slideImage = await createSlideImage(
-          `${sectionHeader}\n\n${generatedContent}`,
-          uploadedMaterials
-        );
-
-        // Save image locally
-        const imagePath = `./uploads/slide_${Date.now()}_${i}.png`;
-        const buffer = await slideImage.toBuffer();
-        fs.writeFileSync(imagePath, buffer);
-
-        // Send each image as a separate message
-        await interaction.followUp({
-          content: `Slide for section "${sectionHeader}" generated successfully!`,
-          files: [imagePath],
-        });
-      } catch (error) {
-        console.error(
-          `Error generating slide for section "${sectionHeader}": ${error.message}`
-        );
-        await interaction.followUp(
-          `Failed to generate slide for section "${sectionHeader}".`
-        );
-      }
-    }
-
-    await interaction.editReply("All slides generated successfully.");
-  }
 });
 
 // Function to split and send long messages
 // Function to split and send long messages
 async function splitAndSendMessage(channel, content, delay) {
-  const chunkSize = 2000;
+  const chunkSize = 5000;
   const numChunks = Math.ceil(content.length / chunkSize);
   let start = 0;
 

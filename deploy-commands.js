@@ -19,20 +19,6 @@ const commands = [
   {
     name: "createoutline",
     description: "Create a class outline",
-    options: [
-      {
-        type: 3, // STRING
-        name: "length",
-        description: "Length of the class outline in minutes",
-        required: false,
-      },
-      {
-        type: 3, // STRING
-        name: "name",
-        description: "Name of the file to save the outline as",
-        required: false,
-      },
-    ],
   },
   {
     name: "releasematerials",
@@ -60,11 +46,15 @@ const commands = [
   },
   {
     name: "createslide",
-    description: "Create a slide with the outline and uploaded materials.",
+    description: "Create a slide with the outline and uploaded materials",
   },
   {
-    name: "creatematerials", // New command to generate materials
-    description: "Generate materials based on uploaded content",
+    name: "next",
+    description: "Move to the next slide",
+  },
+  {
+    name: "back",
+    description: "Move to the previous slide",
   },
 ];
 
