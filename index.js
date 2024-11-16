@@ -93,6 +93,76 @@ client.on("ready", () => {
   console.log("The bot is online!");
 });
 
+// Function to extract text content from a webpage
+async function extractTextFromWebpage(url) {
+  try {
+    const response = await axios.get(url);
+    const $ = cheerio.load(response.data);
+
+    // Remove unwanted elements
+    $('script, style, nav, header, footer, iframe, noscript').remove();
+
+    // Extract title
+    const title = $('title').text().trim();
+
+    // Extract main content
+    const content = $('body').text()
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split('.')
+      .map(sentence => sentence.trim())
+      .filter(sentence => sentence.length > 0)
+      .join('.\n');
+
+    return {
+      title,
+      content,
+      url,
+      extractedAt: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Error extracting content:', error);
+    return null;
+  }
+}
+
+// Function to save webpage content to file and database
+async function saveWebpageContent(url, extractedData) {
+  const uploadDir = path.join(__dirname, "uploads");
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+  const filename = `webpage_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+  const filePath = path.join(uploadDir, filename);
+
+  try {
+    const fileContent = [
+      `Title: ${extractedData.title}`,
+      `URL: ${url}`,
+      `Extracted At: ${extractedData.extractedAt}`,
+      `\nContent:\n${extractedData.content}`
+    ].join('\n');
+
+    await fs.promises.writeFile(filePath, fileContent, 'utf8');
+
+    return new Promise((resolve, reject) => {
+      db.run(
+        `INSERT INTO uploads (fileName, filePath, extractedText) VALUES (?, ?, ?)`,
+        [filename, filePath, extractedData.content],
+        function (err) {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(this.lastID);
+          }
+        }
+      );
+    });
+  } catch (error) {
+    throw new Error(`Failed to save webpage content: ${error.message}`);
+  }
+}
+
 /// Keep this part to handle normal messages and file uploads
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
@@ -461,6 +531,48 @@ client.on(Events.InteractionCreate, async (interaction) => {
         console.error("Error going to previous slide:", error);
         await interaction.editReply("Failed to go to the previous slide.");
       }
+    } else if (commandName === "extractwebpage") {
+      const url = options.getString("url");
+      const lectureLength = options.getString("length") || "45";
+
+      const extractedData = await extractTextFromWebpage(url);
+      if (extractedData) {
+        const response = await axios.post(
+          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+          {
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: `Create a highly detailed, lecture-ready outline for a ${lectureLength}-minute class based on the following content: ${extractedData.content}`
+              }
+            ]
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.API_KEY}`,
+            }
+          }
+        );
+
+        const content = response.data.choices[0].message.content;
+
+        db.run(
+          "INSERT INTO generated_outlines (name, outline) VALUES (?, ?)",
+          ["Outline", content],
+          function (err) {
+            if (err) {
+              console.error("Error saving outline to database", err.message);
+              interaction.editReply("Failed to save the generated outline.");
+            } else {
+              lastGeneratedOutlineId = this.lastID;
+              interaction.editReply("Outline generated and saved.");
+            }
+          }
+        );
+      } else {
+        interaction.editReply("Failed to extract content from the URL.");
+      }
     }
   } catch (error) {
     console.error(`Error handling interaction: ${error.message}`);
@@ -620,38 +732,6 @@ const extractTextFromFiles = async (filePaths) => {
   }
   return allText.join(" ");
 };
-
-async function extractTextFromWebpage(url) {
-  try {
-    const response = await axios.get(url);
-    const $ = cheerio.load(response.data);
-
-    // Remove script and style elements
-    $('script, style').remove();
-
-    // Get the text from the body
-    return $('body').text().trim().replace(/\s+/g, ' ');
-  } catch (error) {
-    console.error(`Error extracting text from ${url}: ${error.message}`);
-    return null;
-  }
-}
-
-function saveWebpageContent(url, content) {
-  return new Promise((resolve, reject) => {
-    db.run(
-      `INSERT INTO uploads (fileName, filePath, extractedText) VALUES (?, ?, ?)`,
-      [url, url, content],
-      function (err) {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(this.lastID);
-        }
-      }
-    );
-  });
-}
 
 // Login to Discord
 client.login(process.env.TOKEN);

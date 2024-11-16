@@ -19,7 +19,21 @@ const commands = [
   {
     name: "createoutline",
     description: "Create a class outline",
-  },
+    options: [
+      {
+        type: 3, // STRING
+        name: "length",
+        description: "Length of the class outline in minutes",
+        required: false,
+      },
+      {
+        type: 3, // STRING
+        name: "name",
+        description: "Name of the file to save the outline as",
+        required: false,
+      },
+    ],
+  }, // Create a class outline
   {
     name: "releasematerials",
     description: "Release materials to students",
@@ -55,6 +69,24 @@ const commands = [
   {
     name: "back",
     description: "Move to the previous slide",
+  },
+  {
+    name: "extractwebpage",
+    description: "Extract text content from a webpage URL and generate an outline",
+    options: [
+      {
+        type: 3,
+        name: "url",
+        description: "The webpage URL to extract content from",
+        required: true,
+      },
+      {
+        type: 3,
+        name: "length",
+        description: "Desired length of outline in minutes (default: 45)",
+        required: true,
+      },
+    ],
   },
 ];
 
