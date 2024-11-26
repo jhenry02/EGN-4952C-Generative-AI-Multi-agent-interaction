@@ -66,6 +66,13 @@ async function extractTextFromWebpage(url) {
     }
 }
 
+// Simple text summarization function
+function summarizeText(text) {
+    const sentences = text.split('. ');
+    const summary = sentences.join('. ');
+    return summary;
+}
+
 // Prompt user to extract text from a webpage and open links
 async function interactiveWebPageExtractor() {
     const rl = readline.createInterface({
@@ -107,10 +114,28 @@ async function interactiveWebPageExtractor() {
                     if (isNaN(linkIndex) || linkIndex < 0 || linkIndex >= links.length) {
                         console.error("Invalid choice. Exiting.");
                     } else {
-                        console.log(`Opening: ${links[linkIndex].url}`);
-                        await open(links[linkIndex].url);
+                        const chosenLink = links[linkIndex];
+                        console.log(`Opening: ${chosenLink.url}`);
+                        await open(chosenLink.url);
+
+                        rl.question("\nEnter the number of a link to summarize: ", async (summaryChoice) => {
+                            const summaryLinkIndex = parseInt(summaryChoice, 10) - 1;
+                            if (isNaN(summaryLinkIndex) || summaryLinkIndex < 0 || summaryLinkIndex >= links.length) {
+                                console.error("Invalid choice. Exiting.");
+                            } else {
+                                const summaryLink = links[summaryLinkIndex];
+                                const content = await extractTextFromWebpage(summaryLink.url);
+                                if (content) {
+                                    console.log("Extracted Text:");
+                                    console.log(content);
+                                    const summary = summarizeText(content);
+                                    console.log("Summary:");
+                                    console.log(summary);
+                                }
+                            }
+                            rl.close();
+                        });
                     }
-                    rl.close();
                 });
             }
         } catch (error) {
@@ -133,6 +158,10 @@ async function extractAndPrintTextFromWebpage(url) {
         const text = $('body').text(); // Extracts all text from the <body>
         console.log("Extracted Text:");
         console.log(text.trim());
+
+        const summary = summarizeText(text.trim());
+        console.log("Summary:");
+        console.log(summary);
     } catch (error) {
         console.error(`Failed to fetch or process the URL: ${error.message}`);
     }
@@ -151,6 +180,10 @@ client.on("messageCreate", async (message) => {
             if (content) {
                 console.log(`Content extracted from ${url}:`);
                 console.log(content);
+
+                const summary = summarizeText(content);
+                console.log("Summary:");
+                console.log(summary);
             }
         }
     }
