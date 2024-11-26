@@ -1,19 +1,14 @@
 const sqlite3 = require("sqlite3").verbose();
+const db = new sqlite3.Database("./uploads.db"); // Adjust path to your SQLite DB
 
-const db = new sqlite3.Database("./uploads.db", (err) => {
-  if (err) {
-    console.error("Error opening database " + err.message);
-  } else {
-    console.log("Connected to the SQLite database.");
-  }
-});
-
-// Delete all entries from the uploads table
-db.run("DELETE FROM uploads", function (err) {
-  if (err) {
-    console.error("Error deleting uploads:", err.message);
-  } else {
-    console.log("All uploaded files have been deleted.");
+db.run(`ALTER TABLE saved_outlines ADD COLUMN fileName TEXT`, (err) => {
+  if (err && !err.message.includes("duplicate column name")) {
+    console.error(
+      "Error adding fileName column to saved_outlines table",
+      err.message
+    );
+  } else if (!err) {
+    console.log("fileName column added to saved_outlines table.");
   }
 });
 

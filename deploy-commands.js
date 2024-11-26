@@ -33,7 +33,7 @@ const commands = [
         required: false,
       },
     ],
-  },
+  }, // Create a class outline
   {
     name: "releasematerials",
     description: "Release materials to students",
@@ -60,7 +60,47 @@ const commands = [
   },
   {
     name: "createslide",
-    description: "Create a slide with the outline and uploaded materials.",
+    description: "Create a slide with the outline and uploaded materials",
+    options: [
+      {
+        type: 3, // STRING
+        name: "classname",
+        description: "The name of the class (e.g., Intro to Python)",
+        required: true,
+      },
+      {
+        type: 3, // STRING
+        name: "username",
+        description: "The instructor's name (e.g., Professor Marte)",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "next",
+    description: "Move to the next slide",
+  },
+  {
+    name: "back",
+    description: "Move to the previous slide",
+  },
+  {
+    name: "extractwebpage",
+    description: "Extract text content from a webpage URL and generate an outline",
+    options: [
+      {
+        type: 3,
+        name: "url",
+        description: "The webpage URL to extract content from",
+        required: true,
+      },
+      {
+        type: 3,
+        name: "length",
+        description: "Desired length of outline in minutes (default: 45)",
+        required: true,
+      },
+    ],
   },
 ];
 
