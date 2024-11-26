@@ -61,6 +61,20 @@ const commands = [
   {
     name: "createslide",
     description: "Create a slide with the outline and uploaded materials",
+    options: [
+      {
+        type: 3, // STRING
+        name: "classname",
+        description: "The name of the class (e.g., Intro to Python)",
+        required: true,
+      },
+      {
+        type: 3, // STRING
+        name: "username",
+        description: "The instructor's name (e.g., Professor Marte)",
+        required: true,
+      },
+    ],
   },
   {
     name: "next",

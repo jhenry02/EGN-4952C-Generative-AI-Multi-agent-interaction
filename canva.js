@@ -19,7 +19,7 @@ function splitOutline(outlineContent) {
   return filteredSections;
 }
 
-function createSlideImage(outlineContent, uploadedMaterials) {
+function createSlideImage(content, isTitleSlide = false) {
   const width = 800;
   const height = 500;
   const canvas = createCanvas(width, height);
@@ -29,17 +29,32 @@ function createSlideImage(outlineContent, uploadedMaterials) {
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, width, height);
 
-  // Title text styling
-  ctx.fillStyle = "#000000";
-  ctx.font = "38px Times New Roman";
-  ctx.fillText("Slide", 50, 50);
+  if (isTitleSlide) {
+    // Title Slide Formatting
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 36px Times New Roman";
+    ctx.fillText(content.title || "Title Not Provided", 50, 100);
 
-  // Content text styling
-  ctx.font = "25px Times New Roman"; // Adjust font size for main content
-  let yPosition = 100;
-  const maxWidth = 700; // Maximum width for text before wrapping
-  const lineHeight = 28; // Line height for spacing
+    ctx.font = "24px Times New Roman";
+    ctx.fillText(`Book Source: ${content.bookSource || "Unknown"}`, 50, 160);
+    ctx.fillText(`Date: ${content.date || "N/A"}`, 50, 200);
+    ctx.fillText(`Instructor: ${content.username || "N/A"}`, 50, 240);
+    ctx.fillText(`Class: ${content.className || "N/A"}`, 50, 280);
+  } else {
+    // Content Slide Formatting
+    ctx.fillStyle = "#000000";
+    ctx.font = "28px Times New Roman";
+    ctx.fillText("Slide Content", 50, 50);
 
+    ctx.font = "20px Times New Roman";
+    let yPosition = 100;
+    const maxWidth = 700;
+    const lineHeight = 30;
+
+    content.split("\n").forEach((line) => {
+      yPosition = wrapText(ctx, line, 50, yPosition, maxWidth, lineHeight);
+    });
+  }
   // Function to wrap text within a specified width
   function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
     const words = text.split(" ");
@@ -62,11 +77,6 @@ function createSlideImage(outlineContent, uploadedMaterials) {
     return yPosition + lineHeight;
   }
 
-  // Render each line of the outline content with wrapping
-  outlineContent.split("\n").forEach((line) => {
-    yPosition = wrapText(ctx, line, 50, yPosition, maxWidth, lineHeight);
-  });
-
   return canvas;
 }
 
@@ -78,22 +88,39 @@ function saveSlideImage(canvas, fileName) {
 }
 
 // Command to generate the current slide
-async function createSlide(outlineContent, userId) {
+async function createSlide(outlineContent, userId, metadata) {
   const sections = splitOutline(outlineContent);
   const currentSlideIndex = userSlides[userId] || 0;
 
-  // Log the current slide index and the section being displayed
-  console.log(`User ${userId} is on slide ${currentSlideIndex}`);
-  console.log(`Displaying section: ${sections[currentSlideIndex]}`);
+  const slideFilePath = path.join(
+    __dirname,
+    `slide_${userId}_${currentSlideIndex}.png`
+  );
 
-  const sectionContent = sections[currentSlideIndex];
+  if (currentSlideIndex === 0) {
+    // Create Title Slide
+    const titleSlideContent = {
+      title: metadata.title || "Default Title",
+      bookSource: metadata.bookSource || "Unknown Source",
+      date: metadata.date || new Date().toLocaleDateString(),
+      username: metadata.username || "Instructor Not Provided", // Use the dynamically provided username
+      className: metadata.className || "Class Name Not Provided", // Use the dynamically provided class name
+    };
 
-  // Generate the slide image for the current section
-  const slideCanvas = createSlideImage(sectionContent);
-  const slideFilePath = path.join(__dirname, "slide_image.png"); // Define the file path
-  saveSlideImage(slideCanvas, slideFilePath); // Save the image
+    console.log(`Creating title slide for user ${userId}`);
+    const slideCanvas = createSlideImage(titleSlideContent, true);
+    saveSlideImage(slideCanvas, slideFilePath);
+  } else {
+    // Create Content Slide
+    const sectionContent = sections[currentSlideIndex];
+    console.log(`User ${userId} is on slide ${currentSlideIndex}`);
+    console.log(`Displaying section: ${sectionContent}`);
 
-  return slideFilePath; // Return the path to the saved file
+    const slideCanvas = createSlideImage(sectionContent, false);
+    saveSlideImage(slideCanvas, slideFilePath);
+  }
+
+  return slideFilePath;
 }
 
 // Command for moving to the next slide
