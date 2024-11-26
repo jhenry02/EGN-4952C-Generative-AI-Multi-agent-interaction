@@ -61,6 +61,7 @@ db.run(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
     outline TEXT,
+    fileName TEXT,
     savedAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )`,
   (err) => {
@@ -375,10 +376,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         );
 
         const content = response.data.choices[0].message.content;
-
+        const title = options.getString("title") || "Untitled Outline";
+        const bookSource = "Book Name"; // Replace with actual book retrieval logic if available
+        const createdBy = interaction.user.username;
+        const createdAt = new Date().toISOString();
         db.run(
-          "INSERT INTO generated_outlines (name, outline) VALUES (?, ?)",
-          ["Outline", content],
+          "INSERT INTO generated_outlines (name, outline, title, book_source, created_by, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
+          ["Outline", content, title, bookSource, createdBy, createdAt],
           function (err) {
             if (err) {
               console.error("Error saving outline to database", err.message);
@@ -406,55 +410,82 @@ client.on(Events.InteractionCreate, async (interaction) => {
           );
           return;
         }
-
         db.get(
-          `SELECT outline FROM generated_outlines WHERE id = ?`,
-          [lastGeneratedOutlineId],
+          `SELECT fileName FROM uploads ORDER BY uploadedAt DESC LIMIT 1`,
+          [],
           (err, row) => {
             if (err) {
-              console.error("Error retrieving generated outline", err.message);
+              console.error(
+                "Error retrieving fileName from uploads table",
+                err.message
+              );
               interaction.editReply(
-                "Failed to retrieve the generated outline."
+                "Failed to retrieve the file name for saving."
               );
               return;
             }
 
-            if (!row) {
+            if (!row || !row.fileName) {
               interaction.editReply(
-                "No generated outline found to save. Please generate an outline first."
+                "No uploaded file found. Please upload a file first."
               );
               return;
             }
 
-            db.run(
-              "INSERT INTO saved_outlines (name, outline) VALUES (?, ?)",
-              [fileName, row.outline],
-              function (err) {
+            const uploadedFileName = row.fileName;
+            db.get(
+              `SELECT outline FROM generated_outlines WHERE id = ?`,
+              [lastGeneratedOutlineId],
+              (err, row) => {
                 if (err) {
                   console.error(
-                    "Error saving outline to database",
+                    "Error retrieving generated outline",
                     err.message
                   );
                   interaction.editReply(
-                    "Failed to save the outline. Please try again."
+                    "Failed to retrieve the generated outline."
                   );
-                } else {
-                  db.run(
-                    `DELETE FROM generated_outlines WHERE id = ?`,
-                    [lastGeneratedOutlineId],
-                    (err) => {
-                      if (err) {
-                        console.error(
-                          "Error deleting old generated outline",
-                          err.message
-                        );
-                      }
-                    }
-                  );
-                  interaction.editReply(
-                    `Outline saved successfully with the name "${fileName}".`
-                  );
+                  return;
                 }
+
+                if (!row) {
+                  interaction.editReply(
+                    "No generated outline found to save. Please generate an outline first."
+                  );
+                  return;
+                }
+
+                db.run(
+                  "INSERT INTO saved_outlines (name, outline, fileName) VALUES (?, ?, ?)",
+                  [fileName, row.outline, uploadedFileName],
+                  function (err) {
+                    if (err) {
+                      console.error(
+                        "Error saving outline to database",
+                        err.message
+                      );
+                      interaction.editReply(
+                        "Failed to save the outline. Please try again."
+                      );
+                    } else {
+                      db.run(
+                        `DELETE FROM generated_outlines WHERE id = ?`,
+                        [lastGeneratedOutlineId],
+                        (err) => {
+                          if (err) {
+                            console.error(
+                              "Error deleting old generated outline",
+                              err.message
+                            );
+                          }
+                        }
+                      );
+                      interaction.editReply(
+                        `Outline saved successfully with the name "${fileName}".`
+                      );
+                    }
+                  }
+                );
               }
             );
           }
@@ -467,28 +498,57 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
     } else if (commandName === "createslide") {
       try {
+        // Collect inputs for className and userName
+        const className =
+          interaction.options.getString("classname") ||
+          "Class Name Not Provided"; // Dynamically fetch class name
+        const inputUsername =
+          interaction.options.getString("username") ||
+          "Instructor Not Provided"; // Fetch username input by user
+        const userId = interaction.user.id; // User ID of the person executing the command
+
         const savedOutlines = await getSavedOutlines();
 
         if (savedOutlines.length === 0) {
           await interaction.editReply("No saved outlines found.");
           return;
         }
+        // Retrieve outline details
+        const outline = savedOutlines[0];
+        const outlineName = outline.name || "Untitled Outline";
+        const fileName = outline.fileName || "File Name Not Available";
+        const date = outline.savedAt || new Date().toISOString();
 
-        const outlineContent = savedOutlines[0].outline;
-        const uploadedMaterials = await getUploadedMaterials();
+        // const outlineContent = savedOutlines[0].outline;
+        // const uploadedMaterials = await getUploadedMaterials();
 
-        const slideFilePath = await createSlide(
-          outlineContent,
-          uploadedMaterials
+        // const slideFilePath = await createSlide(
+        //   outlineContent,
+        //   uploadedMaterials
+        // );
+
+        // Create a first slide with the given details
+        const metadata = {
+          title: savedOutlines[0].name,
+          bookSource: savedOutlines[0].fileName,
+          date: savedOutlines[0].savedAt,
+          username: inputUsername,
+          className,
+        };
+
+        const slidePath = await createSlide(
+          savedOutlines[0].outline,
+          interaction.user.id,
+          metadata
         );
 
-        if (!fs.existsSync(slideFilePath)) {
+        if (!fs.existsSync(slidePath)) {
           throw new Error("Slide image was not created.");
         }
-
+        // Send the slide to the user
         await interaction.followUp({
           content: "Here is your generated slide!",
-          files: [{ attachment: slideFilePath, name: "slide_image.png" }],
+          files: [{ attachment: slidePath, name: "slide.png" }],
         });
       } catch (error) {
         console.error("Error generating slide:", error);
@@ -585,7 +645,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // Function to split and send long messages
 // Function to split and send long messages
 async function splitAndSendMessage(channel, content, delay) {
-  const chunkSize = 5000;
+  const chunkSize = 2000;
   const numChunks = Math.ceil(content.length / chunkSize);
   let start = 0;
 
@@ -732,6 +792,13 @@ const extractTextFromFiles = async (filePaths) => {
   }
   return allText.join(" ");
 };
+
+(async () => {
+  const { data: html } = await axios.get('https://www.freecodecamp.org/news');
+  const $ = cheerio.load(html);
+  const text = $('body').text(); // Extracts all text from the <body>
+  console.log(text.trim());
+})();
 
 // Login to Discord
 client.login(process.env.TOKEN);
