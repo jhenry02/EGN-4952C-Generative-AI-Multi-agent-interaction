@@ -92,6 +92,14 @@ async function createSlide(outlineContent, userId, metadata) {
   const sections = splitOutline(outlineContent);
   const currentSlideIndex = userSlides[userId] || 0;
 
+  // Prevent index out-of-bounds errors
+  if (currentSlideIndex >= sections.length || currentSlideIndex < 0) {
+    console.error(
+      `Error: Slide index ${currentSlideIndex} is out of bounds for user ${userId}`
+    );
+    return null; // Return null to signal no slide was created
+  }
+
   const slideFilePath = path.join(
     __dirname,
     `slide_${userId}_${currentSlideIndex}.png`
@@ -113,6 +121,15 @@ async function createSlide(outlineContent, userId, metadata) {
   } else {
     // Create Content Slide
     const sectionContent = sections[currentSlideIndex];
+
+    // Check if section content is valid
+    if (!sectionContent) {
+      console.error(
+        `Error: Section content is undefined for user ${userId} at index ${currentSlideIndex}`
+      );
+      return null;
+    }
+
     console.log(`User ${userId} is on slide ${currentSlideIndex}`);
     console.log(`Displaying section: ${sectionContent}`);
 
@@ -144,4 +161,5 @@ module.exports = {
   createSlide,
   nextSlide,
   previousSlide,
+  userSlides,
 };

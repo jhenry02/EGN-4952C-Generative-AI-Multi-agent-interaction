@@ -10,7 +10,14 @@ const fs = require("fs");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 const PDFParser = require("pdf2json");
-const { createSlide, nextSlide, previousSlide } = require("./canva.js");
+const {
+  createSlide,
+  nextSlide,
+  previousSlide,
+  userSlides,
+} = require("./canva.js");
+
+const presentationState = {}; // { userId: { slides: [], currentSlide: 0 } }
 
 // Insert file info into the SQLite database
 const db = new sqlite3.Database("./uploads.db", (err) => {
@@ -22,6 +29,23 @@ const db = new sqlite3.Database("./uploads.db", (err) => {
 });
 
 // Create tables if they don't exist
+db.run(
+  `CREATE TABLE IF NOT EXISTS saved_slides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId TEXT,
+    slidePath TEXT,
+    title TEXT,
+    savedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`,
+  (err) => {
+    if (err) {
+      console.error("Error creating saved_slides table " + err.message);
+    } else {
+      console.log("Saved slides table is ready.");
+    }
+  }
+);
+
 db.run(
   `CREATE TABLE IF NOT EXISTS uploads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -466,42 +490,160 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.followUp("Failed to generate slide.");
       }
     } else if (commandName === "next") {
-      try {
-        const savedOutlines = await getSavedOutlines();
-        if (savedOutlines.length === 0) {
-          await interaction.editReply("No saved outlines found.");
-          return;
-        }
+      const userId = interaction.user.id;
 
-        const outlineContent = savedOutlines[0].outline;
-        const imagePath = await nextSlide(outlineContent, interaction.user.id);
+      // Check if user is in an active presentation (after /start)
+      if (presentationState[userId]) {
+        const state = presentationState[userId];
+        state.currentSlide = (state.currentSlide + 1) % state.slides.length; // Loop back to the start if at the end
 
-        // Use followUp for the second message to avoid InteractionAlreadyReplied error
-        await interaction.followUp({ files: [{ attachment: imagePath }] });
-      } catch (error) {
-        console.error("Error going to next slide:", error);
-        await interaction.editReply("Failed to go to the next slide.");
+        return interaction.followUp({
+          content: "Here is your next slide:",
+          files: [{ attachment: state.slides[state.currentSlide] }],
+        });
       }
-    } else if (commandName === "back") {
-      try {
-        const savedOutlines = await getSavedOutlines();
-        if (savedOutlines.length === 0) {
-          await interaction.editReply("No saved outlines found.");
-          return;
-        }
 
-        const outlineContent = savedOutlines[0].outline;
-        const imagePath = await previousSlide(
-          outlineContent,
-          interaction.user.id
+      // Fallback to pre-saving (during /createslide)
+      const savedOutlines = await getSavedOutlines();
+      if (savedOutlines.length === 0) {
+        return interaction.followUp(
+          "No saved outlines found. Generate slides first."
         );
-
-        // Use followUp for the second message to avoid InteractionAlreadyReplied error
-        await interaction.followUp({ files: [{ attachment: imagePath }] });
-      } catch (error) {
-        console.error("Error going to previous slide:", error);
-        await interaction.editReply("Failed to go to the previous slide.");
       }
+
+      const outlineContent = savedOutlines[0].outline;
+      const slidePath = await nextSlide(outlineContent, userId);
+
+      return interaction.followUp({
+        content: "Here is your next slide:",
+        files: [{ attachment: slidePath }],
+      });
+    } else if (commandName === "back") {
+      const userId = interaction.user.id;
+
+      // Check if presentation is active
+      if (presentationState[userId]) {
+        const state = presentationState[userId];
+        state.currentSlide =
+          (state.currentSlide - 1 + state.slides.length) % state.slides.length; // Loop to the end if at the beginning
+
+        return interaction.followUp({
+          content: "Here is your previous slide:",
+          files: [{ attachment: state.slides[state.currentSlide] }],
+        });
+      }
+
+      interaction.reply("You must start the presentation first using /start.");
+
+      // Fallback to pre-saving (during /createslide)
+      const savedOutlines = await getSavedOutlines();
+      if (savedOutlines.length === 0) {
+        return interaction.followUp(
+          "No saved outlines found. Generate slides first."
+        );
+      }
+
+      const outlineContent = savedOutlines[0].outline;
+      const slidePath = await previousSlide(outlineContent, userId);
+
+      return interaction.followUp({
+        content: "Here is your previous slide:",
+        files: [{ attachment: slidePath }],
+      });
+    } else if (commandName === "saveslide") {
+      const userId = interaction.user.id;
+      const folderName = options.getString("folder"); // Get folder name input
+
+      if (!folderName) {
+        return interaction.followUp({
+          content:
+            "Please provide a folder name using `/saveslide folder:<folder_name>`.",
+          ephemeral: true,
+        });
+      }
+
+      const slidesToSave = [];
+      const currentSlideCount = userSlides[userId] || 0;
+
+      for (let i = 0; i <= currentSlideCount; i++) {
+        const slidePath = path.join(__dirname, `slide_${userId}_${i}.png`);
+        if (fs.existsSync(slidePath)) {
+          slidesToSave.push(slidePath);
+        }
+      }
+
+      if (slidesToSave.length === 0) {
+        return interaction.followUp({
+          content: "No slides found to save. Please generate slides first.",
+          ephemeral: true,
+        });
+      }
+
+      slidesToSave.forEach((slidePath, index) => {
+        db.run(
+          `INSERT INTO saved_slides (userId, slidePath, title, folderName) VALUES (?, ?, ?, ?)`,
+          [userId, slidePath, `Slide ${index + 1}`, folderName],
+          (err) => {
+            if (err) {
+              console.error("Error saving slide to database", err.message);
+            }
+          }
+        );
+      });
+
+      interaction.followUp({
+        content: `Slides saved successfully in folder: ${folderName}.`,
+        ephemeral: true,
+      });
+    } else if (commandName === "start") {
+      const userId = interaction.user.id;
+      const folderName = options.getString("folder"); // Get folder name input
+
+      if (!folderName) {
+        return interaction.followUp({
+          content:
+            "Please provide a folder name using `/start folder:<folder_name>`.",
+          ephemeral: true,
+        });
+      }
+
+      db.all(
+        `SELECT slidePath FROM saved_slides WHERE userId = ? AND folderName = ? ORDER BY id ASC`,
+        [userId, folderName],
+        (err, rows) => {
+          if (err) {
+            console.error("Error fetching saved slides:", err);
+            return interaction.reply("Failed to start the presentation.");
+          }
+
+          if (rows.length === 0) {
+            return interaction.followUp(
+              `No saved slides found in folder: ${folderName}.`
+            );
+          }
+
+          const slides = rows.map((row) => row.slidePath);
+          presentationState[userId] = {
+            slides: slides,
+            currentSlide: 0, // Start from the first slide
+          };
+
+          interaction.followUp({
+            content: `Presentation started. Here is the first slide from folder: ${folderName}.`,
+            files: [{ attachment: slides[0] }],
+          });
+        }
+      );
+    } else if (commandName === "end") {
+      const userId = interaction.user.id;
+
+      if (!presentationState[userId]) {
+        interaction.editReply("You are not currently presenting.");
+        return;
+      }
+
+      delete presentationState[userId];
+      interaction.editReply("Presentation ended. Thank you!");
     }
   } catch (error) {
     console.error(`Error handling interaction: ${error.message}`);

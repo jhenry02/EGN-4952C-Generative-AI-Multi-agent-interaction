@@ -84,6 +84,40 @@ const commands = [
     name: "back",
     description: "Move to the previous slide",
   },
+  {
+    name: "saveslide", // New Command
+    description: "Save the current slide to the database",
+    options: [
+      {
+        type: 3, // STRING
+        name: "folder",
+        description: "The name of the folder to save slides in",
+        required: true, // Make this true if folder specification is mandatory
+      },
+      {
+        type: 3, // STRING
+        name: "title",
+        description: "The title to assign to the slide",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "start",
+    description: "Start presenting saved slides from the database",
+    options: [
+      {
+        type: 3, // STRING
+        name: "folder",
+        description: "The name of the folder to present slides from",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "end",
+    description: "End the presentation and clear the saved slides",
+  },
 ];
 
 (async () => {
