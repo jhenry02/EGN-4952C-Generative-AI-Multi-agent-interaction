@@ -118,6 +118,36 @@ const commands = [
     name: "end",
     description: "End the presentation and clear the saved slides",
   },
+  {
+    name: "quiz",
+    description: "Generate a multiple choice quiz based off the outline",
+    options: [
+      {
+        type: 3,
+        name: "length",
+        description: "How many questions",
+        required: true,
+      }, 
+      {
+        type: 3,
+        name: "name",
+        description: "Name of the quiz",
+        required: true,
+      }
+    ],
+  },
+  {
+    name:"releasequiz",
+    description: "Releases the questions of the quiz without the answers",
+    options:[
+      {
+        type: 3,
+        name: "name",
+        description: "Which quiz do you want to release",
+        required: true,
+      }
+    ]
+  },
 ];
 
 (async () => {
