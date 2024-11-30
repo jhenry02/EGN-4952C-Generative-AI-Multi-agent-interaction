@@ -111,6 +111,7 @@ const client = new Client({
 });
 
 let lastGeneratedOutlineId = null; // Store the ID of the last generated outline
+let lastGeneratedQuizId = null;
 
 // Log when the bot is online
 client.on("ready", () => {
@@ -651,6 +652,99 @@ client.on(Events.InteractionCreate, async (interaction) => {
       "An error occurred while processing your request."
     );
   }
+  if (commandName === "quiz")
+    {
+      const uploadedMaterials = await getUploadedMaterials();
+      const questionNumber = options.getString("length") || 10; //Default will be 10
+      const savedOutlines = await getSavedOutlines();
+      console.log("Uploaded Materials:", uploadedMaterials);
+  
+      if (savedOutlines.length === 0) {
+        await interaction.editReply("No saved outlines found.");
+        return;
+      }
+  
+      const outlineContent = savedOutlines[0].outline;
+      if(uploadedMaterials.length === 0){
+        await interaction.editReply("Cannot generate quiz without uploaded materials");
+        return;
+      }
+
+      const response = await axios.post(
+        "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+        {
+          model: "gpt-4",
+          messages: [
+            {
+              role: "system",
+              content: `Generate a ${questionNumber}-question multiple choice quiz based on the content in ${outlineContent}, include the correct answers`,
+            },
+          ],
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.API_KEY}`,
+          },
+        }
+      );
+      const content = response.data.choices[0].message.content;
+      const name = options.getString("name")
+      db.run(
+        "INSERT INTO generated_quizzes (name, quiz) VALUES (?, ?)",
+        [name, content],
+        function (err) {
+          if (err) {
+            console.error("Error saving quiz", err.message);
+            interaction.editReply("Failed to save the generated quiz.");
+          } else {
+            lastGeneratedQuizId = this.lastID; // Store the last generated quiz ID
+            splitAndSendMessage(interaction.channel, content, 2000);
+            interaction.editReply("Quiz generated and saved.");
+          }
+        }
+      );
+    }
+  
+  if (commandName === "releasequiz") 
+    {
+      const quizName = options.getString("name"); // Get the quiz name from the command options
+      try {
+        // Retrieve the quiz from the database
+        const savedQuiz = await getSavedQuizzes(quizName);
+    
+        if (!savedQuiz) {
+          await interaction.editReply(`No quiz found with the name "${quizName}".`);
+          return;
+        }
+    
+        const quizContent = savedQuiz.quiz; // Extract the quiz content
+    
+        //Remove answers
+        const response = await axios.post(
+          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+          {
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: `Return the following quiz with the correct answers hidden:\n\n${quizContent}`,
+              },
+            ],
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.API_KEY}`,
+            },
+          }
+        );
+        const modifiedQuiz = response.data.choices[0]?.message?.content;
+        await interaction.editReply(modifiedQuiz);
+      } catch (error) 
+      {
+        console.error("Error releasing quiz:", error.message);
+        await interaction.editReply("Unable to release quiz.");
+      }
+  }
 });
 
 // Function to split and send long messages
@@ -696,6 +790,20 @@ function getUploadedMaterials() {
       const materials = rows.map((row) => row.extractedText).filter(Boolean);
       resolve(materials);
     });
+  });
+}
+function getSavedQuizzes(name) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      "SELECT quiz FROM generated_quizzes WHERE name = ?",
+      [name],
+      (err, rows) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve(rows);
+      }
+    );
   });
 }
 
