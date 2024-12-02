@@ -109,6 +109,23 @@ db.run(
       console.log("Generated quizzes table is ready.");
     }
   }
+
+);
+db.run(
+  `CREATE TABLE IF NOT EXISTS generated_homework (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    content TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`,
+  (err) => {
+    if (err) {
+      console.error("Error creating generated_homework table", err.message);
+    } else {
+      console.log("Generated homework table is ready.");
+    }
+  }
 );
 
 // Initialize Discord client with necessary intents
@@ -887,6 +904,135 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.editReply("Unable to release quiz.");
       }
     }
+    // Inside your client.on(Events.InteractionCreate) event handler, 
+    // alongside your existing command handlers (createoutline, quiz, etc.)
+    // Add these cases to handle homework commands:
+
+    if (commandName === "homework") {
+      try {
+        const length = options.getString("length");
+        const name = options.getString("name");
+        const dueDate = options.getString("duedate");
+
+        const savedOutlines = await getSavedOutlines();
+        if (savedOutlines.length === 0) {
+          await interaction.editReply("No saved outlines found. Please create an outline first.");
+          return;
+        }
+
+        const outlineContent = savedOutlines[0].outline;
+
+        // Generate homework using the AI
+        const response = await axios.post(
+          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+          {
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: `Generate a homework assignment with ${length} questions based on the following outline. Include detailed problems that test understanding and application of the concepts. Include solutions for instructor reference. Each question should require thoughtful analysis and demonstrate understanding of the material:\n\n${outlineContent}`
+              }
+            ]
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.API_KEY}`,
+            }
+          }
+        );
+
+        const homeworkContent = response.data.choices[0].message.content;
+
+        // Save to database
+        db.run(
+          "INSERT INTO generated_homework (name, content, due_date) VALUES (?, ?, ?)",
+          [name, homeworkContent, dueDate],
+          function (err) {
+            if (err) {
+              console.error("Error saving homework", err.message);
+              interaction.editReply("Failed to save the generated homework.");
+              return;
+            }
+
+            // Send the homework to the channel
+            splitAndSendMessage(interaction.channel, homeworkContent, 2000);
+            interaction.editReply(`Homework "${name}" generated and saved. Due date: ${dueDate}`);
+          }
+        );
+
+      } catch (error) {
+        console.error("Error generating homework:", error);
+        await interaction.editReply("Failed to generate homework assignment.");
+      }
+    }
+
+    else if (commandName === "releasehomework") {
+      try {
+        const name = options.getString("name");
+
+        // Get homework from database
+        db.get(
+          "SELECT * FROM generated_homework WHERE name = ?",
+          [name],
+          async (err, homework) => {
+            if (err) {
+              console.error("Error fetching homework:", err);
+              await interaction.editReply("Failed to fetch homework assignment.");
+              return;
+            }
+
+            if (!homework) {
+              await interaction.editReply(`No homework found with the name "${name}".`);
+              return;
+            }
+
+            // Remove solutions using AI
+            const response = await axios.post(
+              "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+              {
+                model: "gpt-4",
+                messages: [
+                  {
+                    role: "system",
+                    content: `Remove all solutions and answers from this homework assignment, keeping only the questions and any necessary context or instructions:\n\n${homework.content}`
+                  }
+                ]
+              },
+              {
+                headers: {
+                  Authorization: `Bearer ${process.env.API_KEY}`,
+                }
+              }
+            );
+
+            const studentVersion = response.data.choices[0].message.content;
+
+            // Create embed for homework
+            const embed = {
+              title: `Homework Assignment: ${name}`,
+              description: "Please complete all questions and submit by the due date.",
+              fields: [
+                {
+                  name: "Due Date",
+                  value: homework.due_date,
+                  inline: true
+                }
+              ],
+              color: 0x0099FF,
+              timestamp: new Date()
+            };
+
+            // Send to channel
+            await interaction.editReply({ embeds: [embed] });
+            await splitAndSendMessage(interaction.channel, studentVersion, 2000);
+          }
+        );
+      } catch (error) {
+        console.error("Error releasing homework:", error);
+        await interaction.editReply("Failed to release homework assignment.");
+      }
+    }
+
   };
 
   // Function to split and send long messages
