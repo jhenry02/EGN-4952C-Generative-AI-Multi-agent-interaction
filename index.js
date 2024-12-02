@@ -667,20 +667,131 @@ client.on(Events.InteractionCreate, async (interaction) => {
       "An error occurred while processing your request."
     );
   }
-  if (commandName === "quiz")
-    {
+  if (commandName === "homework") {
+    const action = options.getString("action");
+
+    if (action === "upload") {
+      const title = options.getString("title");
+      const dueDate = options.getString("due_date");
+      const description = options.getString("description");
+
+      if (!title) {
+        await interaction.editReply("Please provide a title for the homework assignment.");
+        return;
+      }
+
+      const uploadDir = path.join(__dirname, "homework_uploads");
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+
+      await interaction.editReply("Please upload the homework file in your next message.");
+
+      const filter = m => m.author.id === interaction.user.id && m.attachments.size > 0;
+      const collector = interaction.channel.createMessageCollector({ filter, time: 30000, max: 1 });
+
+      collector.on("collect", async message => {
+        const attachment = message.attachments.first();
+        const fileName = `${Date.now()}-${attachment.name}`;
+        const filePath = path.join(uploadDir, fileName);
+
+        try {
+          const response = await axios({
+            method: "get",
+            url: attachment.url,
+            responseType: "stream"
+          });
+
+          const fileStream = fs.createWriteStream(filePath);
+          response.data.pipe(fileStream);
+
+          fileStream.on("finish", () => {
+            db.run(
+              `INSERT INTO homework (title, description, file_path, due_date, uploaded_by) 
+                 VALUES (?, ?, ?, ?, ?)`,
+              [title, description, filePath, dueDate, interaction.user.id],
+              function (err) {
+                if (err) {
+                  console.error("Error saving homework to database", err.message);
+                  interaction.followUp("Failed to save homework assignment.");
+                  return;
+                }
+
+                const embed = {
+                  title: "Homework Assignment Uploaded",
+                  fields: [
+                    { name: "Title", value: title },
+                    { name: "Due Date", value: dueDate || "Not specified" },
+                    { name: "Description", value: description || "No description provided" }
+                  ],
+                  color: 0x00ff00,
+                  timestamp: new Date()
+                };
+
+                interaction.followUp({ embeds: [embed] });
+              }
+            );
+          });
+
+          fileStream.on("error", (err) => {
+            console.error("Error saving file:", err);
+            interaction.followUp("Failed to save the homework file.");
+          });
+        } catch (error) {
+          console.error("Error downloading file:", error);
+          interaction.followUp("Failed to process the homework file.");
+        }
+      });
+
+      collector.on("end", collected => {
+        if (collected.size === 0) {
+          interaction.followUp("No file was uploaded in time. Please try again.");
+        }
+      });
+    }
+    else if (action === "list") {
+      db.all(
+        `SELECT * FROM homework ORDER BY uploaded_at DESC`,
+        [],
+        async (err, rows) => {
+          if (err) {
+            console.error("Error fetching homework assignments", err.message);
+            await interaction.editReply("Failed to fetch homework assignments.");
+            return;
+          }
+
+          if (rows.length === 0) {
+            await interaction.editReply("No homework assignments found.");
+            return;
+          }
+
+          const embed = {
+            title: "Homework Assignments",
+            fields: rows.map(row => ({
+              name: row.title,
+              value: `Due: ${row.due_date || 'Not specified'}\n${row.description || 'No description'}`
+            })),
+            color: 0x0099ff,
+            timestamp: new Date()
+          };
+
+          await interaction.editReply({ embeds: [embed] });
+        }
+      );
+    }
+    if (commandName === "quiz") {
       const uploadedMaterials = await getUploadedMaterials();
       const questionNumber = options.getString("length") || 10; //Default will be 10
       const savedOutlines = await getSavedOutlines();
       console.log("Uploaded Materials:", uploadedMaterials);
-  
+
       if (savedOutlines.length === 0) {
         await interaction.editReply("No saved outlines found.");
         return;
       }
-  
+
       const outlineContent = savedOutlines[0].outline;
-      if(uploadedMaterials.length === 0){
+      if (uploadedMaterials.length === 0) {
         await interaction.editReply("Cannot generate quiz without uploaded materials");
         return;
       }
@@ -718,22 +829,39 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
         }
       );
+      db.run(
+        `CREATE TABLE IF NOT EXISTS homework (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT,
+    file_path TEXT,
+    due_date TEXT,
+    uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    uploaded_by TEXT
+  )`,
+        (err) => {
+          if (err) {
+            console.error("Error creating homework table", err.message);
+          } else {
+            console.log("Homework table is ready.");
+          }
+        }
+      );
     }
-  
-  if (commandName === "releasequiz") 
-    {
+
+    if (commandName === "releasequiz") {
       const quizName = options.getString("name"); // Get the quiz name from the command options
       try {
         // Retrieve the quiz from the database
         const savedQuiz = await getSavedQuizzes(quizName);
-    
+
         if (!savedQuiz) {
           await interaction.editReply(`No quiz found with the name "${quizName}".`);
           return;
         }
-    
+
         const quizContent = savedQuiz.quiz; // Extract the quiz content
-    
+
         //Remove answers
         const response = await axios.post(
           "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
@@ -754,178 +882,178 @@ client.on(Events.InteractionCreate, async (interaction) => {
         );
         const modifiedQuiz = response.data.choices[0]?.message?.content;
         await interaction.editReply(modifiedQuiz);
-      } catch (error) 
-      {
+      } catch (error) {
         console.error("Error releasing quiz:", error.message);
         await interaction.editReply("Unable to release quiz.");
       }
-  }
-});
+    }
+  };
 
-// Function to split and send long messages
-// Function to split and send long messages
-async function splitAndSendMessage(channel, content, delay) {
-  const chunkSize = 2000;
-  const numChunks = Math.ceil(content.length / chunkSize);
-  let start = 0;
+  // Function to split and send long messages
+  // Function to split and send long messages
+  async function splitAndSendMessage(channel, content, delay) {
+    const chunkSize = 2000;
+    const numChunks = Math.ceil(content.length / chunkSize);
+    let start = 0;
 
-  for (let i = 0; i < numChunks; i++) {
-    const chunk = content.substring(start, start + chunkSize);
-    await channel.send(chunk); // Await the send operation
-    start += chunkSize;
-    if (i < numChunks - 1) {
-      await new Promise((resolve) => setTimeout(resolve, delay)); // Await the delay
+    for (let i = 0; i < numChunks; i++) {
+      const chunk = content.substring(start, start + chunkSize);
+      await channel.send(chunk); // Await the send operation
+      start += chunkSize;
+      if (i < numChunks - 1) {
+        await new Promise((resolve) => setTimeout(resolve, delay)); // Await the delay
+      }
     }
   }
-}
 
-// Function to retrieve saved outlines
-function getSavedOutlines() {
-  return new Promise((resolve, reject) => {
-    db.all(
-      "SELECT * FROM saved_outlines ORDER BY createdAt DESC LIMIT 1",
-      [],
-      (err, rows) => {
-        if (err) {
-          return reject(err);
+  // Function to retrieve saved outlines
+  function getSavedOutlines() {
+    return new Promise((resolve, reject) => {
+      db.all(
+        "SELECT * FROM saved_outlines ORDER BY createdAt DESC LIMIT 1",
+        [],
+        (err, rows) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(rows);
         }
-        resolve(rows);
-      }
-    );
-  });
-}
-// Function to get uploaded materials from the SQLite database
-function getUploadedMaterials() {
-  return new Promise((resolve, reject) => {
-    db.all("SELECT extractedText FROM uploads", [], (err, rows) => {
-      if (err) {
-        console.error("Error retrieving uploaded materials:", err.message);
-        return reject(err);
-      }
-      const materials = rows.map((row) => row.extractedText).filter(Boolean);
-      resolve(materials);
+      );
     });
-  });
-}
-function getSavedQuizzes(name) {
-  return new Promise((resolve, reject) => {
-    db.get(
-      "SELECT quiz FROM generated_quizzes WHERE name = ?",
-      [name],
-      (err, rows) => {
+  }
+  // Function to get uploaded materials from the SQLite database
+  function getUploadedMaterials() {
+    return new Promise((resolve, reject) => {
+      db.all("SELECT extractedText FROM uploads", [], (err, rows) => {
         if (err) {
+          console.error("Error retrieving uploaded materials:", err.message);
           return reject(err);
         }
-        resolve(rows);
-      }
-    );
-  });
-}
-
-async function generateContentFromMaterials(
-  uploadedMaterials,
-  sectionHeader,
-  lectureLength
-) {
-  const contentArray = uploadedMaterials; // Already contains extracted text
-
-  // Debug: Check combined content from materials
-  console.log("Combined Material Content:", contentArray);
-
-  // Handle content length to avoid API errors
-  const MAX_CONTENT_LENGTH = 4000;
-  let sectionContent = contentArray.join("\n");
-
-  if (sectionContent.length > MAX_CONTENT_LENGTH) {
-    sectionContent = sectionContent.substring(0, MAX_CONTENT_LENGTH); // Truncate if too long
+        const materials = rows.map((row) => row.extractedText).filter(Boolean);
+        resolve(materials);
+      });
+    });
   }
-
-  // Debug: Check the combined section content
-  console.log("Combined Section Content:", sectionContent);
-
-  // Initialize an array to hold generated content for each section
-  const generatedContents = [];
-  // const contentSections = [];
-
-  for (const contentSection of contentSections) {
-    try {
-      const payload = {
-        model: "gpt-4",
-        messages: [
-          {
-            role: "system",
-            content: `Create a detailed ${lectureLength}-minute ${generatedContent} section for the lecture on "${sectionHeader}". Use the materials provided. Include definitions, examples, and detailed explanations relevant to this section. Please give out information.`,
-          },
-          {
-            role: "user",
-            content: sectionContent, // Combined content from materials
-          },
-        ],
-      };
-
-      console.log("Payload being sent:", JSON.stringify(payload));
-
-      // Make the API call
-      const response = await axios.post(
-        "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-        payload,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.API_KEY}`,
-            "Content-Type": "application/json",
-          },
+  function getSavedQuizzes(name) {
+    return new Promise((resolve, reject) => {
+      db.get(
+        "SELECT quiz FROM generated_quizzes WHERE name = ?",
+        [name],
+        (err, rows) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(rows);
         }
       );
-      // Extract and store content from the API response
-      const generatedContent = response.data.choices[0].message.content;
-      generatedContents.push(generatedContent);
-      console.log("AI Response Content:", generatedContent);
-    } catch (error) {
-      console.error(
-        `Error generating content for ${contentSection}: ${error.message}`
-      );
-      throw new Error(`Failed to generate content for ${contentSection}.`);
-    }
+    });
   }
 
-  // Return all generated content concatenated as a single string
-  return generatedContents.join("\n");
-}
+  async function generateContentFromMaterials(
+    uploadedMaterials,
+    sectionHeader,
+    lectureLength
+  ) {
+    const contentArray = uploadedMaterials; // Already contains extracted text
 
-function splitContent(content, maxLength) {
-  const sections = [];
-  let currentSection = "";
+    // Debug: Check combined content from materials
+    console.log("Combined Material Content:", contentArray);
 
-  const words = content.split(" "); // Split by spaces to maintain whole words
+    // Handle content length to avoid API errors
+    const MAX_CONTENT_LENGTH = 4000;
+    let sectionContent = contentArray.join("\n");
 
-  for (const word of words) {
-    if ((currentSection + word).length + 100 <= maxLength) {
-      // Add a buffer of 100 characters
-      currentSection += `${word} `;
-    } else {
-      sections.push(currentSection.trim());
-      currentSection = `${word} `;
+    if (sectionContent.length > MAX_CONTENT_LENGTH) {
+      sectionContent = sectionContent.substring(0, MAX_CONTENT_LENGTH); // Truncate if too long
     }
-  }
-  if (currentSection) sections.push(currentSection.trim());
 
-  return sections;
-}
-const extractTextFromFiles = async (filePaths) => {
-  let allText = [];
-  for (const filePath of filePaths) {
-    const ext = path.extname(filePath).toLowerCase();
-    if (ext === ".pdf") {
-      const text = await extractTextFromPDF(filePath); // Implement PDF text extraction
-      allText.push(text);
-    } else {
-      // Handle other file types (e.g., .txt, .docx, etc.)
-      const text = fs.readFileSync(filePath, "utf8"); // Example for .txt files
-      allText.push(text);
+    // Debug: Check the combined section content
+    console.log("Combined Section Content:", sectionContent);
+
+    // Initialize an array to hold generated content for each section
+    const generatedContents = [];
+    // const contentSections = [];
+
+    for (const contentSection of contentSections) {
+      try {
+        const payload = {
+          model: "gpt-4",
+          messages: [
+            {
+              role: "system",
+              content: `Create a detailed ${lectureLength}-minute ${generatedContent} section for the lecture on "${sectionHeader}". Use the materials provided. Include definitions, examples, and detailed explanations relevant to this section. Please give out information.`,
+            },
+            {
+              role: "user",
+              content: sectionContent, // Combined content from materials
+            },
+          ],
+        };
+
+        console.log("Payload being sent:", JSON.stringify(payload));
+
+        // Make the API call
+        const response = await axios.post(
+          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+          payload,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.API_KEY}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+        // Extract and store content from the API response
+        const generatedContent = response.data.choices[0].message.content;
+        generatedContents.push(generatedContent);
+        console.log("AI Response Content:", generatedContent);
+      } catch (error) {
+        console.error(
+          `Error generating content for ${contentSection}: ${error.message}`
+        );
+        throw new Error(`Failed to generate content for ${contentSection}.`);
+      }
     }
-  }
-  return allText.join(" ");
-};
 
-// Login to Discord
-client.login(process.env.TOKEN);
+    // Return all generated content concatenated as a single string
+    return generatedContents.join("\n");
+  }
+
+  function splitContent(content, maxLength) {
+    const sections = [];
+    let currentSection = "";
+
+    const words = content.split(" "); // Split by spaces to maintain whole words
+
+    for (const word of words) {
+      if ((currentSection + word).length + 100 <= maxLength) {
+        // Add a buffer of 100 characters
+        currentSection += `${word} `;
+      } else {
+        sections.push(currentSection.trim());
+        currentSection = `${word} `;
+      }
+    }
+    if (currentSection) sections.push(currentSection.trim());
+
+    return sections;
+  }
+  const extractTextFromFiles = async (filePaths) => {
+    let allText = [];
+    for (const filePath of filePaths) {
+      const ext = path.extname(filePath).toLowerCase();
+      if (ext === ".pdf") {
+        const text = await extractTextFromPDF(filePath); // Implement PDF text extraction
+        allText.push(text);
+      } else {
+        // Handle other file types (e.g., .txt, .docx, etc.)
+        const text = fs.readFileSync(filePath, "utf8"); // Example for .txt files
+        allText.push(text);
+      }
+    }
+    return allText.join(" ");
+  };
+
+  // Login to Discord
+  client.login(process.env.TOKEN);
+}); // Add this closing bracket to fix the syntax error
