@@ -169,7 +169,7 @@ const commands = [
         name: "length",
         description: "How many questions",
         required: true,
-      }, 
+      },
       {
         type: 3,
         name: "name",
@@ -179,9 +179,9 @@ const commands = [
     ],
   },
   {
-    name:"releasequiz",
+    name: "releasequiz",
     description: "Releases the questions of the quiz without the answers",
-    options:[
+    options: [
       {
         type: 3,
         name: "name",
@@ -190,6 +190,43 @@ const commands = [
       }
     ]
   },
+
+  {
+    name: "homework",
+    description: "Generate a homework assignment based off the outline",
+    options: [
+      {
+        type: 3,
+        name: "length",
+        description: "How many questions",
+        required: true,
+      },
+      {
+        type: 3,
+        name: "name",
+        description: "Name of the homework",
+        required: true,
+      },
+      {
+        type: 3,
+        name: "duedate",
+        description: "Due date for the homework (YYYY-MM-DD)",
+        required: true,
+      }
+    ],
+  },
+  {
+    name: "releasehomework",
+    description: "Releases the homework assignment without the answers",
+    options: [
+      {
+        type: 3,
+        name: "name",
+        description: "Which homework do you want to release",
+        required: true,
+      }
+    ]
+  }
 ];
 
 (async () => {
