@@ -11,8 +11,11 @@ const fs = require("fs");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 const PDFParser = require("pdf2json");
-const { createSlide, nextSlide, previousSlide } = require("./canva.js");
+const { createSlide, nextSlide, previousSlide, userSlides } = require("./canva.js");
 const { YoutubeTranscript } = require('youtube-transcript');
+
+
+const presentationState = {}; // { userId: { slides: [], currentSlide: 0 } }
 
 // Constants for polls
 const EMOJI_LETTERS = ['🇦', '🇧', '🇨', '🇩'];
@@ -28,6 +31,23 @@ const db = new sqlite3.Database("./uploads.db", (err) => {
 });
 
 // Create tables if they don't exist
+db.run(
+  `CREATE TABLE IF NOT EXISTS saved_slides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId TEXT,
+    slidePath TEXT,
+    title TEXT,
+    savedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`,
+  (err) => {
+    if (err) {
+      console.error("Error creating saved_slides table " + err.message);
+    } else {
+      console.log("Saved slides table is ready.");
+    }
+  }
+);
+
 db.run(
   `CREATE TABLE IF NOT EXISTS uploads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,6 +97,21 @@ db.run(
     }
   }
 );
+db.run(
+  ` CREATE TABLE IF NOT EXISTS generated_quizzes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    quiz TEXT,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`,
+  (err) => {
+    if (err) {
+      console.error("Error creating generated_quizzes table " + err.message);
+    } else {
+      console.log("Generated quizzes table is ready.");
+    }
+  }
+);
 
 // Initialize Discord client with necessary intents
 const client = new Client({
@@ -91,8 +126,11 @@ const client = new Client({
   ],
 });
 
-let lastGeneratedOutlineId = null;
 // Bot ready event
+let lastGeneratedOutlineId = null; // Store the ID of the last generated outline
+let lastGeneratedQuizId = null;
+
+// Log when the bot is online
 client.on("ready", () => {
   console.log("The bot is online!");
 });
@@ -632,27 +670,37 @@ client.on(Events.InteractionCreate, async (interaction) => {
         console.error("Error generating slide:", error);
         await interaction.followUp("Failed to generate slide.");
       }
+    } else if (commandName === "next") {
+    const userId = interaction.user.id;
+
+    // Check if user is in an active presentation (after /start)
+    if (presentationState[userId]) {
+      const state = presentationState[userId];
+      state.currentSlide = (state.currentSlide + 1) % state.slides.length; // Loop back to the start if at the end
+
+      return interaction.followUp({
+        content: "Here is your next slide:",
+        files: [{ attachment: state.slides[state.currentSlide] }],
+      });
     }
 
-    else if (commandName === "next") {
-      try {
-        const savedOutlines = await getSavedOutlines();
-        if (savedOutlines.length === 0) {
-          await interaction.editReply("No saved outlines found.");
-          return;
-        }
-
-        const outlineContent = savedOutlines[0].outline;
-        const imagePath = await nextSlide(outlineContent, interaction.user.id);
-
-        await interaction.followUp({ files: [{ attachment: imagePath }] });
-      } catch (error) {
-        console.error("Error going to next slide:", error);
-        await interaction.editReply("Failed to go to the next slide.");
-      }
+    // Fallback to pre-saving (during /createslide)
+    const savedOutlines = await getSavedOutlines();
+    if (savedOutlines.length === 0) {
+      return interaction.followUp(
+        "No saved outlines found. Generate slides first."
+      );
     }
 
-    else if (commandName === "back") {
+    const outlineContent = savedOutlines[0].outline;
+    const slidePath = await nextSlide(outlineContent, userId);
+
+    return interaction.followUp({
+      content: "Here is your next slide:",
+      files: [{ attachment: slidePath }],
+    });
+
+  } else if (commandName === "back") {
       try {
         const savedOutlines = await getSavedOutlines();
         if (savedOutlines.length === 0) {
@@ -667,11 +715,250 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } catch (error) {
         console.error("Error going to previous slide:", error);
         await interaction.editReply("Failed to go to the previous slide.");
+        return interaction.followUp({
+          content: "Here is your next slide:",
+          files: [{ attachment: state.slides[state.currentSlide] }],
+        });
       }
+
+      // Fallback to pre-saving (during /createslide)
+      const savedOutlines = await getSavedOutlines();
+      if (savedOutlines.length === 0) {
+        return interaction.followUp(
+          "No saved outlines found. Generate slides first."
+        );
+      }
+
+      const outlineContent = savedOutlines[0].outline;
+      const slidePath = await nextSlide(outlineContent, userId);
+
+      return interaction.followUp({
+        content: "Here is your next slide:",
+        files: [{ attachment: slidePath }],
+      });
+    } else if (commandName === "back") {
+      const userId = interaction.user.id;
+
+      // Check if presentation is active
+      if (presentationState[userId]) {
+        const state = presentationState[userId];
+        state.currentSlide =
+          (state.currentSlide - 1 + state.slides.length) % state.slides.length; // Loop to the end if at the beginning
+
+        return interaction.followUp({
+          content: "Here is your previous slide:",
+          files: [{ attachment: state.slides[state.currentSlide] }],
+        });
+      }
+
+      interaction.reply("You must start the presentation first using /start.");
+
+      // Fallback to pre-saving (during /createslide)
+      const savedOutlines = await getSavedOutlines();
+      if (savedOutlines.length === 0) {
+        return interaction.followUp(
+          "No saved outlines found. Generate slides first."
+        );
+      }
+
+      const outlineContent = savedOutlines[0].outline;
+      const slidePath = await previousSlide(outlineContent, userId);
+
+      return interaction.followUp({
+        content: "Here is your previous slide:",
+        files: [{ attachment: slidePath }],
+      });
+    } else if (commandName === "saveslide") {
+      const userId = interaction.user.id;
+      const folderName = options.getString("folder"); // Get folder name input
+
+      if (!folderName) {
+        return interaction.followUp({
+          content:
+            "Please provide a folder name using `/saveslide folder:<folder_name>`.",
+          ephemeral: true,
+        });
+      }
+
+      const slidesToSave = [];
+      const currentSlideCount = userSlides[userId] || 0;
+
+      for (let i = 0; i <= currentSlideCount; i++) {
+        const slidePath = path.join(__dirname, `slide_${userId}_${i}.png`);
+        if (fs.existsSync(slidePath)) {
+          slidesToSave.push(slidePath);
+        }
+      }
+
+      if (slidesToSave.length === 0) {
+        return interaction.followUp({
+          content: "No slides found to save. Please generate slides first.",
+          ephemeral: true,
+        });
+      }
+
+      slidesToSave.forEach((slidePath, index) => {
+        db.run(
+          `INSERT INTO saved_slides (userId, slidePath, title, folderName) VALUES (?, ?, ?, ?)`,
+          [userId, slidePath, `Slide ${index + 1}`, folderName],
+          (err) => {
+            if (err) {
+              console.error("Error saving slide to database", err.message);
+            }
+          }
+        );
+      });
+
+      interaction.followUp({
+        content: `Slides saved successfully in folder: ${folderName}.`,
+        ephemeral: true,
+      });
+    } else if (commandName === "start") {
+      const userId = interaction.user.id;
+      const folderName = options.getString("folder"); // Get folder name input
+
+      if (!folderName) {
+        return interaction.followUp({
+          content:
+            "Please provide a folder name using `/start folder:<folder_name>`.",
+          ephemeral: true,
+        });
+      }
+
+      db.all(
+        `SELECT slidePath FROM saved_slides WHERE userId = ? AND folderName = ? ORDER BY id ASC`,
+        [userId, folderName],
+        (err, rows) => {
+          if (err) {
+            console.error("Error fetching saved slides:", err);
+            return interaction.reply("Failed to start the presentation.");
+          }
+
+          if (rows.length === 0) {
+            return interaction.followUp(
+              `No saved slides found in folder: ${folderName}.`
+            );
+          }
+
+          const slides = rows.map((row) => row.slidePath);
+          presentationState[userId] = {
+            slides: slides,
+            currentSlide: 0, // Start from the first slide
+          };
+
+          interaction.followUp({
+            content: `Presentation started. Here is the first slide from folder: ${folderName}.`,
+            files: [{ attachment: slides[0] }],
+          });
+        }
+      );
+    } else if (commandName === "end") {
+      const userId = interaction.user.id;
+
+      if (!presentationState[userId]) {
+        interaction.editReply("You are not currently presenting.");
+        return;
+      }
+
+      delete presentationState[userId];
+      interaction.editReply("Presentation ended. Thank you!");
     }
   } catch (error) {
     console.error(`Error handling interaction: ${error.message}`);
     await interaction.editReply("An error occurred while processing your request.");
+  }
+  if (commandName === "quiz")
+    {
+      const uploadedMaterials = await getUploadedMaterials();
+      const questionNumber = options.getString("length") || 10; //Default will be 10
+      const savedOutlines = await getSavedOutlines();
+      console.log("Uploaded Materials:", uploadedMaterials);
+  
+      if (savedOutlines.length === 0) {
+        await interaction.editReply("No saved outlines found.");
+        return;
+      }
+  
+      const outlineContent = savedOutlines[0].outline;
+      if(uploadedMaterials.length === 0){
+        await interaction.editReply("Cannot generate quiz without uploaded materials");
+        return;
+      }
+
+      const response = await axios.post(
+        "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+        {
+          model: "gpt-4",
+          messages: [
+            {
+              role: "system",
+              content: `Generate a ${questionNumber}-question multiple choice quiz based on the content in ${outlineContent}, include the correct answers`,
+            },
+          ],
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.API_KEY}`,
+          },
+        }
+      );
+      const content = response.data.choices[0].message.content;
+      const name = options.getString("name")
+      db.run(
+        "INSERT INTO generated_quizzes (name, quiz) VALUES (?, ?)",
+        [name, content],
+        function (err) {
+          if (err) {
+            console.error("Error saving quiz", err.message);
+            interaction.editReply("Failed to save the generated quiz.");
+          } else {
+            lastGeneratedQuizId = this.lastID; // Store the last generated quiz ID
+            splitAndSendMessage(interaction.channel, content, 2000);
+            interaction.editReply("Quiz generated and saved.");
+          }
+        }
+      );
+    }
+  
+  if (commandName === "releasequiz") 
+    {
+      const quizName = options.getString("name"); // Get the quiz name from the command options
+      try {
+        // Retrieve the quiz from the database
+        const savedQuiz = await getSavedQuizzes(quizName);
+    
+        if (!savedQuiz) {
+          await interaction.editReply(`No quiz found with the name "${quizName}".`);
+          return;
+        }
+    
+        const quizContent = savedQuiz.quiz; // Extract the quiz content
+    
+        //Remove answers
+        const response = await axios.post(
+          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+          {
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: `Return the following quiz with the correct answers hidden:\n\n${quizContent}`,
+              },
+            ],
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.API_KEY}`,
+            },
+          }
+        );
+        const modifiedQuiz = response.data.choices[0]?.message?.content;
+        await interaction.editReply(modifiedQuiz);
+      } catch (error) 
+      {
+        console.error("Error releasing quiz:", error.message);
+        await interaction.editReply("Unable to release quiz.");
+      }
   }
 });
 // Helper Functions
@@ -800,6 +1087,20 @@ function getUploadedMaterials() {
       const materials = rows.map((row) => row.extractedText).filter(Boolean);
       resolve(materials);
     });
+  });
+}
+function getSavedQuizzes(name) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      "SELECT quiz FROM generated_quizzes WHERE name = ?",
+      [name],
+      (err, rows) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve(rows);
+      }
+    );
   });
 }
 
