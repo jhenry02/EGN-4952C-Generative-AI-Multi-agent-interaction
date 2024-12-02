@@ -95,6 +95,21 @@ db.run(
     }
   }
 );
+db.run(
+  ` CREATE TABLE IF NOT EXISTS generated_quizzes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    quiz TEXT,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`,
+  (err) => {
+    if (err) {
+      console.error("Error creating generated_quizzes table " + err.message);
+    } else {
+      console.log("Generated quizzes table is ready.");
+    }
+  }
+);
 
 // Initialize Discord client with necessary intents
 const client = new Client({
