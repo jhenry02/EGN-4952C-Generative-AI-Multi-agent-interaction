@@ -4,22 +4,24 @@ const {
   IntentsBitField,
   Events,
   GatewayIntentBits,
+  EmbedBuilder,
 } = require("discord.js");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 const PDFParser = require("pdf2json");
-const {
-  createSlide,
-  nextSlide,
-  previousSlide,
-  userSlides,
-} = require("./canva.js");
+const { createSlide, nextSlide, previousSlide, userSlides } = require("./canva.js");
+const { YoutubeTranscript } = require('youtube-transcript');
+
 
 const presentationState = {}; // { userId: { slides: [], currentSlide: 0 } }
 
-// Insert file info into the SQLite database
+// Constants for polls
+const EMOJI_LETTERS = ['🇦', '🇧', '🇨', '🇩'];
+const POLL_STORAGE = new Map(); // Store active polls
+
+// Initialize SQLite database
 const db = new sqlite3.Database("./uploads.db", (err) => {
   if (err) {
     console.error("Error opening database " + err.message);
@@ -85,7 +87,7 @@ db.run(
     name TEXT,
     outline TEXT,
     fileName TEXT,
-    savedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )`,
   (err) => {
     if (err) {
@@ -118,13 +120,13 @@ const client = new Client({
     IntentsBitField.Flags.GuildMessages,
     IntentsBitField.Flags.MessageContent,
     IntentsBitField.Flags.GuildMessageReactions,
-
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
   ],
 });
 
+// Bot ready event
 let lastGeneratedOutlineId = null; // Store the ID of the last generated outline
 let lastGeneratedQuizId = null;
 
@@ -133,18 +135,16 @@ client.on("ready", () => {
   console.log("The bot is online!");
 });
 
-/// Keep this part to handle normal messages and file uploads
+// Message handling
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   try {
-    // Send typing indicator
     await message.channel.sendTyping();
 
-    // Simple AI conversation logic for normal messages
     const response = await axios.post(
       "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
       {
-        model: "gpt-4", // Or whichever model you are using
+        model: "gpt-4",
         messages: [
           { role: "system", content: "You are a helpful assistant." },
           { role: "user", content: message.content },
@@ -156,9 +156,7 @@ client.on("messageCreate", async (message) => {
         },
       }
     );
-    // Check for next, back, and loadoutline commands
 
-    // Log the entire response
     console.log("Full AI Response:", response.data);
 
     const content = response.data.choices[0]?.message?.content;
@@ -168,13 +166,10 @@ client.on("messageCreate", async (message) => {
     } else {
       console.error("No content in AI response");
     }
-    // Send the AI's response back to the user
-    splitAndSendMessage(message.channel, content, 2000);
   } catch (error) {
     console.error(`Error in message handling: ${error.message}`);
   }
 
-  // Handle file uploads
   // Handle file uploads
   if (message.attachments.size > 0) {
     message.attachments.forEach(async (attachment) => {
@@ -203,7 +198,7 @@ client.on("messageCreate", async (message) => {
             `File "${fileName}" uploaded successfully and saved to "${filePath}".`
           );
 
-          // Insert file info into the SQLite database
+          // Insert file info into database
           db.run(
             `INSERT INTO uploads (fileName, filePath) VALUES (?, ?)`,
             [fileName, filePath],
@@ -218,11 +213,9 @@ client.on("messageCreate", async (message) => {
                 `File "${fileName}" stored at "${filePath}" with ID ${this.lastID}`
               );
 
-              // Text extraction logic
-              let rawText = null;
+              // Handle PDF files
               if (path.extname(fileName).toLowerCase() === ".pdf") {
                 console.log("PDF detected");
-
                 const pdfParser = new PDFParser(this, 1);
 
                 pdfParser.on("pdfParser_dataError", (errData) => {
@@ -230,19 +223,17 @@ client.on("messageCreate", async (message) => {
                 });
 
                 pdfParser.on("pdfParser_dataReady", (pdfData) => {
-                  rawText = pdfParser.getRawTextContent();
+                  let rawText = pdfParser.getRawTextContent();
 
-                  // Truncate the text if it exceeds the maximum character limit
                   const maxCharLimit = 3000;
                   if (rawText.length > maxCharLimit) {
                     console.log(
                       `Text exceeds the maximum character limit of ${maxCharLimit}. Truncating...`
                     );
-                    rawText = rawText.slice(0, maxCharLimit); // Truncate text to maxCharLimit characters
+                    rawText = rawText.slice(0, maxCharLimit);
                   }
                   console.log(rawText);
 
-                  // Add the rawText to the extractedText field of the most recent entry in the database
                   db.run(
                     `UPDATE uploads SET extractedText = ? WHERE id = ?`,
                     [rawText, this.lastID],
@@ -278,15 +269,14 @@ client.on("messageCreate", async (message) => {
     return;
   }
 });
-
-// Now, let's handle slash commands in the interactionCreate event
+// Command handling
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isCommand()) return;
 
   const { commandName, options } = interaction;
 
   try {
-    await interaction.deferReply(); // Acknowledge interaction
+    await interaction.deferReply();
 
     if (commandName === "createoutline") {
       try {
@@ -328,12 +318,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const content = response.data.choices[0].message.content;
         const title = options.getString("title") || "Untitled Outline";
-        const bookSource = "Book Name"; // Replace with actual book retrieval logic if available
+        const bookSource = "Book Name";
         const createdBy = interaction.user.username;
         const createdAt = new Date().toISOString();
+
         db.run(
-          "INSERT INTO generated_outlines (name, outline, title, book_source, created_by, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
-          ["Outline", content, title, bookSource, createdBy, createdAt],
+          "INSERT INTO generated_outlines (name, outline) VALUES (?, ?)",
+          ["Outline", content],
           function (err) {
             if (err) {
               console.error("Error saving outline to database", err.message);
@@ -351,7 +342,197 @@ client.on(Events.InteractionCreate, async (interaction) => {
           "An error occurred while creating the outline."
         );
       }
-    } else if (commandName === "save") {
+    }
+
+    else if (commandName === "createoutlineyoutube") {
+      try {
+        const youtubeUrl = options.getString("url");
+        const lectureLength = options.getString("length") || "45";
+        const outlineName = options.getString("name") || "youtube-outline";
+
+        if (!youtubeUrl) {
+          await interaction.editReply("Please provide a YouTube URL.");
+          return;
+        }
+
+        const videoId = extractVideoId(youtubeUrl);
+        if (!videoId) {
+          await interaction.editReply("Invalid YouTube URL.");
+          return;
+        }
+
+        await interaction.editReply("Fetching video transcript...");
+
+        const transcript = await getYoutubeTranscript(videoId);
+        if (!transcript) {
+          await interaction.editReply("Could not fetch video transcript.");
+          return;
+        }
+
+        const response = await axios.post(
+          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+          {
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: "You are an expert at creating educational outlines."
+              },
+              {
+                role: "user",
+                content: `Create a ${lectureLength}-minute lecture outline based on the following video transcript. Focus on the main topics and key points:\n\n${transcript}`
+              }
+            ]
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.API_KEY}`
+            }
+          }
+        );
+
+        const outlineContent = response.data.choices[0].message.content;
+
+        db.run(
+          "INSERT INTO generated_outlines (name, outline) VALUES (?, ?)",
+          [outlineName, outlineContent],
+          function (err) {
+            if (err) {
+              console.error("Error saving outline to database", err.message);
+              interaction.editReply("Failed to save the generated outline.");
+            } else {
+              lastGeneratedOutlineId = this.lastID;
+              splitAndSendMessage(interaction.channel, outlineContent, 2000);
+              interaction.editReply(`Outline "${outlineName}" generated successfully!`);
+            }
+          }
+        );
+      } catch (error) {
+        console.error(`Error in createoutlineyoutube command: ${error.message}`);
+        await interaction.editReply(
+          "An error occurred while creating the outline."
+        );
+      }
+    }
+    else if (commandName === "createpolls") {
+      try {
+        const pollCount = options.getInteger("count") || 5;
+        const pollName = options.getString("name") || "lecture-polls";
+
+        const savedOutlines = await getSavedOutlines();
+        if (savedOutlines.length === 0) {
+          await interaction.editReply("No saved outlines found.");
+          return;
+        }
+
+        const outlineContent = savedOutlines[0].outline;
+        
+        await interaction.editReply("Generating poll questions...");
+
+        const response = await axios.post(
+          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+          {
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: "You are an expert at creating educational assessment questions."
+              },
+              {
+                role: "user",
+                content: `Create ${pollCount} multiple choice questions. Each question should have 4 options (A-D). Format:
+                Question 1: [Question]
+                A) [Option]
+                B) [Option]
+                C) [Option]
+                D) [Option]
+                Correct: [A-D]
+                
+                Base the questions on this outline:\n\n${outlineContent}`
+              }
+            ]
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.API_KEY}`
+            }
+          }
+        );
+
+        const pollContent = response.data.choices[0].message.content;
+        const questions = parseQuestions(pollContent);
+
+        // Store polls in database
+        db.run(
+          "INSERT INTO generated_outlines (name, outline) VALUES (?, ?)",
+          [pollName, pollContent],
+          async function (err) {
+            if (err) {
+              console.error("Error saving polls to database", err.message);
+              await interaction.editReply("Failed to save the generated polls.");
+              return;
+            }
+
+            lastGeneratedOutlineId = this.lastID;
+            
+            // Store questions for interactive display
+            POLL_STORAGE.set(interaction.user.id, {
+              questions,
+              currentIndex: 0,
+              votes: new Array(questions.length).fill().map(() => new Map())
+            });
+
+            // Send first question
+            await sendPollQuestion(interaction, questions[0], 0, questions.length);
+          }
+        );
+      } catch (error) {
+        console.error(`Error in createpolls command: ${error.message}`);
+        await interaction.editReply("An error occurred while creating the polls.");
+      }
+    }
+
+    else if (commandName === "pollresults") {
+      try {
+        const userData = POLL_STORAGE.get(interaction.user.id);
+        if (!userData) {
+          await interaction.editReply("No active polls found.");
+          return;
+        }
+
+        const questionNum = options.getInteger("question") || (userData.currentIndex + 1);
+        const questionIndex = questionNum - 1;
+
+        if (questionIndex < 0 || questionIndex >= userData.questions.length) {
+          await interaction.editReply("Invalid question number.");
+          return;
+        }
+
+        const question = userData.questions[questionIndex];
+        const votes = userData.votes[questionIndex];
+        
+        const results = new Array(question.options.length).fill(0);
+        votes.forEach(vote => results[vote]++);
+
+        const embed = new EmbedBuilder()
+          .setTitle(`Poll Results: Question ${questionNum}`)
+          .setDescription(question.text)
+          .addFields({
+            name: 'Results',
+            value: question.options.map((opt, i) => 
+              `${EMOJI_LETTERS[i]} ${opt}: ${results[i]} votes (${Math.round(results[i] / votes.size * 100) || 0}%)`
+            ).join('\n')
+          })
+          .setFooter({ text: `Correct Answer: ${question.correct}` })
+          .setColor('#00FF00');
+
+        await interaction.editReply({ embeds: [embed] });
+      } catch (error) {
+        console.error(`Error in pollresults command: ${error.message}`);
+        await interaction.editReply("An error occurred while showing poll results.");
+      }
+    }
+    else if (commandName === "save") {
       try {
         const fileName = options.getString("name");
 
@@ -361,6 +542,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           );
           return;
         }
+
         db.get(
           `SELECT fileName FROM uploads ORDER BY uploadedAt DESC LIMIT 1`,
           [],
@@ -447,16 +629,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           "An error occurred while saving the outline."
         );
       }
-    } else if (commandName === "createslide") {
+    }
+
+    else if (commandName === "createslide") {
       try {
-        // Collect inputs for className and userName
-        const className =
-          interaction.options.getString("classname") ||
-          "Class Name Not Provided"; // Dynamically fetch class name
-        const inputUsername =
-          interaction.options.getString("username") ||
-          "Instructor Not Provided"; // Fetch username input by user
-        const userId = interaction.user.id; // User ID of the person executing the command
+        const className = interaction.options.getString("classname") || "Class Name Not Provided";
+        const inputUsername = interaction.options.getString("username") || "Instructor Not Provided";
+        const userId = interaction.user.id;
 
         const savedOutlines = await getSavedOutlines();
 
@@ -464,25 +643,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.editReply("No saved outlines found.");
           return;
         }
-        // Retrieve outline details
-        const outline = savedOutlines[0];
-        const outlineName = outline.name || "Untitled Outline";
-        const fileName = outline.fileName || "File Name Not Available";
-        const date = outline.savedAt || new Date().toISOString();
 
-        // const outlineContent = savedOutlines[0].outline;
-        // const uploadedMaterials = await getUploadedMaterials();
-
-        // const slideFilePath = await createSlide(
-        //   outlineContent,
-        //   uploadedMaterials
-        // );
-
-        // Create a first slide with the given details
         const metadata = {
           title: savedOutlines[0].name,
           bookSource: savedOutlines[0].fileName,
-          date: savedOutlines[0].savedAt,
+          date: new Date().toLocaleDateString(),
           username: inputUsername,
           className,
         };
@@ -496,7 +661,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!fs.existsSync(slidePath)) {
           throw new Error("Slide image was not created.");
         }
-        // Send the slide to the user
+        
         await interaction.followUp({
           content: "Here is your generated slide!",
           files: [{ attachment: slidePath, name: "slide.png" }],
@@ -506,13 +671,50 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.followUp("Failed to generate slide.");
       }
     } else if (commandName === "next") {
-      const userId = interaction.user.id;
+    const userId = interaction.user.id;
 
-      // Check if user is in an active presentation (after /start)
-      if (presentationState[userId]) {
-        const state = presentationState[userId];
-        state.currentSlide = (state.currentSlide + 1) % state.slides.length; // Loop back to the start if at the end
+    // Check if user is in an active presentation (after /start)
+    if (presentationState[userId]) {
+      const state = presentationState[userId];
+      state.currentSlide = (state.currentSlide + 1) % state.slides.length; // Loop back to the start if at the end
 
+      return interaction.followUp({
+        content: "Here is your next slide:",
+        files: [{ attachment: state.slides[state.currentSlide] }],
+      });
+    }
+
+    // Fallback to pre-saving (during /createslide)
+    const savedOutlines = await getSavedOutlines();
+    if (savedOutlines.length === 0) {
+      return interaction.followUp(
+        "No saved outlines found. Generate slides first."
+      );
+    }
+
+    const outlineContent = savedOutlines[0].outline;
+    const slidePath = await nextSlide(outlineContent, userId);
+
+    return interaction.followUp({
+      content: "Here is your next slide:",
+      files: [{ attachment: slidePath }],
+    });
+
+  } else if (commandName === "back") {
+      try {
+        const savedOutlines = await getSavedOutlines();
+        if (savedOutlines.length === 0) {
+          await interaction.editReply("No saved outlines found.");
+          return;
+        }
+
+        const outlineContent = savedOutlines[0].outline;
+        const imagePath = await previousSlide(outlineContent, interaction.user.id);
+
+        await interaction.followUp({ files: [{ attachment: imagePath }] });
+      } catch (error) {
+        console.error("Error going to previous slide:", error);
+        await interaction.editReply("Failed to go to the previous slide.");
         return interaction.followUp({
           content: "Here is your next slide:",
           files: [{ attachment: state.slides[state.currentSlide] }],
@@ -663,9 +865,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   } catch (error) {
     console.error(`Error handling interaction: ${error.message}`);
-    await interaction.editReply(
-      "An error occurred while processing your request."
-    );
+    await interaction.editReply("An error occurred while processing your request.");
   }
   if (commandName === "homework") {
     const action = options.getString("action");
@@ -886,174 +1086,173 @@ client.on(Events.InteractionCreate, async (interaction) => {
         console.error("Error releasing quiz:", error.message);
         await interaction.editReply("Unable to release quiz.");
       }
-    }
-  };
+  }
+});
 
-  // Function to split and send long messages
-  // Function to split and send long messages
-  async function splitAndSendMessage(channel, content, delay) {
-    const chunkSize = 2000;
-    const numChunks = Math.ceil(content.length / chunkSize);
-    let start = 0;
+// Function to split and send long messages
+// Function to split and send long messages
+async function splitAndSendMessage(channel, content, delay) {
+  const chunkSize = 2000;
+  const numChunks = Math.ceil(content.length / chunkSize);
+  let start = 0;
 
-    for (let i = 0; i < numChunks; i++) {
-      const chunk = content.substring(start, start + chunkSize);
-      await channel.send(chunk); // Await the send operation
-      start += chunkSize;
-      if (i < numChunks - 1) {
-        await new Promise((resolve) => setTimeout(resolve, delay)); // Await the delay
-      }
+  for (let i = 0; i < numChunks; i++) {
+    const chunk = content.substring(start, start + chunkSize);
+    await channel.send(chunk); // Await the send operation
+    start += chunkSize;
+    if (i < numChunks - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delay)); // Await the delay
     }
   }
+}
 
-  // Function to retrieve saved outlines
-  function getSavedOutlines() {
-    return new Promise((resolve, reject) => {
-      db.all(
-        "SELECT * FROM saved_outlines ORDER BY createdAt DESC LIMIT 1",
-        [],
-        (err, rows) => {
-          if (err) {
-            return reject(err);
-          }
-          resolve(rows);
-        }
-      );
-    });
-  }
-  // Function to get uploaded materials from the SQLite database
-  function getUploadedMaterials() {
-    return new Promise((resolve, reject) => {
-      db.all("SELECT extractedText FROM uploads", [], (err, rows) => {
+// Function to retrieve saved outlines
+function getSavedOutlines() {
+  return new Promise((resolve, reject) => {
+    db.all(
+      "SELECT * FROM saved_outlines ORDER BY createdAt DESC LIMIT 1",
+      [],
+      (err, rows) => {
         if (err) {
-          console.error("Error retrieving uploaded materials:", err.message);
           return reject(err);
         }
-        const materials = rows.map((row) => row.extractedText).filter(Boolean);
-        resolve(materials);
-      });
+        resolve(rows);
+      }
+    );
+  });
+}
+// Function to get uploaded materials from the SQLite database
+function getUploadedMaterials() {
+  return new Promise((resolve, reject) => {
+    db.all("SELECT extractedText FROM uploads", [], (err, rows) => {
+      if (err) {
+        console.error("Error retrieving uploaded materials:", err.message);
+        return reject(err);
+      }
+      const materials = rows.map((row) => row.extractedText).filter(Boolean);
+      resolve(materials);
     });
+  });
+}
+function getSavedQuizzes(name) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      "SELECT quiz FROM generated_quizzes WHERE name = ?",
+      [name],
+      (err, rows) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve(rows);
+      }
+    );
+  });
+}
+
+async function generateContentFromMaterials(
+  uploadedMaterials,
+  sectionHeader,
+  lectureLength
+) {
+  const contentArray = uploadedMaterials; // Already contains extracted text
+
+  // Debug: Check combined content from materials
+  console.log("Combined Material Content:", contentArray);
+
+  // Handle content length to avoid API errors
+  const MAX_CONTENT_LENGTH = 4000;
+  let sectionContent = contentArray.join("\n");
+
+  if (sectionContent.length > MAX_CONTENT_LENGTH) {
+    sectionContent = sectionContent.substring(0, MAX_CONTENT_LENGTH); // Truncate if too long
   }
-  function getSavedQuizzes(name) {
-    return new Promise((resolve, reject) => {
-      db.get(
-        "SELECT quiz FROM generated_quizzes WHERE name = ?",
-        [name],
-        (err, rows) => {
-          if (err) {
-            return reject(err);
-          }
-          resolve(rows);
+
+  // Debug: Check the combined section content
+  console.log("Combined Section Content:", sectionContent);
+
+  // Initialize an array to hold generated content for each section
+  const generatedContents = [];
+  // const contentSections = [];
+
+  for (const contentSection of contentSections) {
+    try {
+      const payload = {
+        model: "gpt-4",
+        messages: [
+          {
+            role: "system",
+            content: `Create a detailed ${lectureLength}-minute ${generatedContent} section for the lecture on "${sectionHeader}". Use the materials provided. Include definitions, examples, and detailed explanations relevant to this section. Please give out information.`,
+          },
+          {
+            role: "user",
+            content: sectionContent, // Combined content from materials
+          },
+        ],
+      };
+
+      console.log("Payload being sent:", JSON.stringify(payload));
+
+      // Make the API call
+      const response = await axios.post(
+        "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.API_KEY}`,
+            "Content-Type": "application/json",
+          },
         }
       );
-    });
+      // Extract and store content from the API response
+      const generatedContent = response.data.choices[0].message.content;
+      generatedContents.push(generatedContent);
+      console.log("AI Response Content:", generatedContent);
+    } catch (error) {
+      console.error(
+        `Error generating content for ${contentSection}: ${error.message}`
+      );
+      throw new Error(`Failed to generate content for ${contentSection}.`);
+    }
   }
 
-  async function generateContentFromMaterials(
-    uploadedMaterials,
-    sectionHeader,
-    lectureLength
-  ) {
-    const contentArray = uploadedMaterials; // Already contains extracted text
+  // Return all generated content concatenated as a single string
+  return generatedContents.join("\n");
+}
 
-    // Debug: Check combined content from materials
-    console.log("Combined Material Content:", contentArray);
+function splitContent(content, maxLength) {
+  const sections = [];
+  let currentSection = "";
 
-    // Handle content length to avoid API errors
-    const MAX_CONTENT_LENGTH = 4000;
-    let sectionContent = contentArray.join("\n");
+  const words = content.split(" "); // Split by spaces to maintain whole words
 
-    if (sectionContent.length > MAX_CONTENT_LENGTH) {
-      sectionContent = sectionContent.substring(0, MAX_CONTENT_LENGTH); // Truncate if too long
+  for (const word of words) {
+    if ((currentSection + word).length + 100 <= maxLength) {
+      // Add a buffer of 100 characters
+      currentSection += `${word} `;
+    } else {
+      sections.push(currentSection.trim());
+      currentSection = `${word} `;
     }
-
-    // Debug: Check the combined section content
-    console.log("Combined Section Content:", sectionContent);
-
-    // Initialize an array to hold generated content for each section
-    const generatedContents = [];
-    // const contentSections = [];
-
-    for (const contentSection of contentSections) {
-      try {
-        const payload = {
-          model: "gpt-4",
-          messages: [
-            {
-              role: "system",
-              content: `Create a detailed ${lectureLength}-minute ${generatedContent} section for the lecture on "${sectionHeader}". Use the materials provided. Include definitions, examples, and detailed explanations relevant to this section. Please give out information.`,
-            },
-            {
-              role: "user",
-              content: sectionContent, // Combined content from materials
-            },
-          ],
-        };
-
-        console.log("Payload being sent:", JSON.stringify(payload));
-
-        // Make the API call
-        const response = await axios.post(
-          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-          payload,
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.API_KEY}`,
-              "Content-Type": "application/json",
-            },
-          }
-        );
-        // Extract and store content from the API response
-        const generatedContent = response.data.choices[0].message.content;
-        generatedContents.push(generatedContent);
-        console.log("AI Response Content:", generatedContent);
-      } catch (error) {
-        console.error(
-          `Error generating content for ${contentSection}: ${error.message}`
-        );
-        throw new Error(`Failed to generate content for ${contentSection}.`);
-      }
-    }
-
-    // Return all generated content concatenated as a single string
-    return generatedContents.join("\n");
   }
+  if (currentSection) sections.push(currentSection.trim());
 
-  function splitContent(content, maxLength) {
-    const sections = [];
-    let currentSection = "";
-
-    const words = content.split(" "); // Split by spaces to maintain whole words
-
-    for (const word of words) {
-      if ((currentSection + word).length + 100 <= maxLength) {
-        // Add a buffer of 100 characters
-        currentSection += `${word} `;
-      } else {
-        sections.push(currentSection.trim());
-        currentSection = `${word} `;
-      }
+  return sections;
+}
+const extractTextFromFiles = async (filePaths) => {
+  let allText = [];
+  for (const filePath of filePaths) {
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext === ".pdf") {
+      const text = await extractTextFromPDF(filePath); // Implement PDF text extraction
+      allText.push(text);
+    } else {
+      // Handle other file types (e.g., .txt, .docx, etc.)
+      const text = fs.readFileSync(filePath, "utf8"); // Example for .txt files
+      allText.push(text);
     }
-    if (currentSection) sections.push(currentSection.trim());
-
-    return sections;
   }
-  const extractTextFromFiles = async (filePaths) => {
-    let allText = [];
-    for (const filePath of filePaths) {
-      const ext = path.extname(filePath).toLowerCase();
-      if (ext === ".pdf") {
-        const text = await extractTextFromPDF(filePath); // Implement PDF text extraction
-        allText.push(text);
-      } else {
-        // Handle other file types (e.g., .txt, .docx, etc.)
-        const text = fs.readFileSync(filePath, "utf8"); // Example for .txt files
-        allText.push(text);
-      }
-    }
-    return allText.join(" ");
-  };
+  return allText.join(" ");
+};
 
-  // Login to Discord
-  client.login(process.env.TOKEN);
-}); // Add this closing bracket to fix the syntax error
+// Login to Discord
+client.login(process.env.TOKEN);
