@@ -35,15 +35,57 @@ const commands = [
     ],
   },
   {
-    name: "releasematerials",
-    description: "Release materials to students",
+    name: "createoutlineyoutube",
+    description: "Create an outline from a YouTube video",
     options: [
       {
         type: 3, // STRING
-        name: "materials",
-        description: "IDs or filenames of materials to release",
+        name: "url",
+        description: "YouTube video URL",
         required: true,
       },
+      {
+        type: 3, // STRING
+        name: "length",
+        description: "Length of the class outline in minutes",
+        required: false,
+      },
+      {
+        type: 3, // STRING
+        name: "name",
+        description: "Name for the outline file",
+        required: false,
+      }
+    ],
+  },
+  {
+    name: "createpolls",
+    description: "Create poll questions based on saved outlines",
+    options: [
+      {
+        type: 3, // STRING
+        name: "name",
+        description: "Name for the generated polls",
+        required: false,
+      },
+      {
+        type: 4, // INTEGER
+        name: "count",
+        description: "Number of poll questions to generate (default: 5)",
+        required: false,
+      }
+    ],
+  },
+  {
+    name: "pollresults",
+    description: "Show results for the current poll",
+    options: [
+      {
+        type: 4, // INTEGER
+        name: "question",
+        description: "Question number to show results for",
+        required: false,
+      }
     ],
   },
   {
