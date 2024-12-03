@@ -11,14 +11,18 @@ const fs = require("fs");
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 const PDFParser = require("pdf2json");
-const { createSlide, nextSlide, previousSlide, userSlides } = require("./canva.js");
-const { YoutubeTranscript } = require('youtube-transcript');
-
+const {
+  createSlide,
+  nextSlide,
+  previousSlide,
+  userSlides,
+} = require("./canva.js");
+const { YoutubeTranscript } = require("youtube-transcript");
 
 const presentationState = {}; // { userId: { slides: [], currentSlide: 0 } }
 
 // Constants for polls
-const EMOJI_LETTERS = ['🇦', '🇧', '🇨', '🇩'];
+const EMOJI_LETTERS = ["🇦", "🇧", "🇨", "🇩"];
 const POLL_STORAGE = new Map(); // Store active polls
 
 // Initialize SQLite database
@@ -138,6 +142,13 @@ client.on("ready", () => {
 // Message handling
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
+  const greetings = ["hello", "hi", "hey", "howdy", "greetings"];
+  if (greetings.includes(message.content.toLowerCase())) {
+    const username = message.author.username;
+    await message.reply(`Hello ${username}, how can I help you?`);
+    return;
+  }
+
   try {
     await message.channel.sendTyping();
 
@@ -342,9 +353,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           "An error occurred while creating the outline."
         );
       }
-    }
-
-    else if (commandName === "createoutlineyoutube") {
+    } else if (commandName === "createoutlineyoutube") {
       try {
         const youtubeUrl = options.getString("url");
         const lectureLength = options.getString("length") || "45";
@@ -376,18 +385,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
             messages: [
               {
                 role: "system",
-                content: "You are an expert at creating educational outlines."
+                content: "You are an expert at creating educational outlines.",
               },
               {
                 role: "user",
-                content: `Create a ${lectureLength}-minute lecture outline based on the following video transcript. Focus on the main topics and key points:\n\n${transcript}`
-              }
-            ]
+                content: `Create a ${lectureLength}-minute lecture outline based on the following video transcript. Focus on the main topics and key points:\n\n${transcript}`,
+              },
+            ],
           },
           {
             headers: {
-              Authorization: `Bearer ${process.env.API_KEY}`
-            }
+              Authorization: `Bearer ${process.env.API_KEY}`,
+            },
           }
         );
 
@@ -403,18 +412,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
             } else {
               lastGeneratedOutlineId = this.lastID;
               splitAndSendMessage(interaction.channel, outlineContent, 2000);
-              interaction.editReply(`Outline "${outlineName}" generated successfully!`);
+              interaction.editReply(
+                `Outline "${outlineName}" generated successfully!`
+              );
             }
           }
         );
       } catch (error) {
-        console.error(`Error in createoutlineyoutube command: ${error.message}`);
+        console.error(
+          `Error in createoutlineyoutube command: ${error.message}`
+        );
         await interaction.editReply(
           "An error occurred while creating the outline."
         );
       }
-    }
-    else if (commandName === "createpolls") {
+    } else if (commandName === "createpolls") {
       try {
         const pollCount = options.getInteger("count") || 5;
         const pollName = options.getString("name") || "lecture-polls";
@@ -426,7 +438,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const outlineContent = savedOutlines[0].outline;
-        
+
         await interaction.editReply("Generating poll questions...");
 
         const response = await axios.post(
@@ -436,7 +448,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             messages: [
               {
                 role: "system",
-                content: "You are an expert at creating educational assessment questions."
+                content:
+                  "You are an expert at creating educational assessment questions.",
               },
               {
                 role: "user",
@@ -448,14 +461,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 D) [Option]
                 Correct: [A-D]
                 
-                Base the questions on this outline:\n\n${outlineContent}`
-              }
-            ]
+                Base the questions on this outline:\n\n${outlineContent}`,
+              },
+            ],
           },
           {
             headers: {
-              Authorization: `Bearer ${process.env.API_KEY}`
-            }
+              Authorization: `Bearer ${process.env.API_KEY}`,
+            },
           }
         );
 
@@ -469,70 +482,84 @@ client.on(Events.InteractionCreate, async (interaction) => {
           async function (err) {
             if (err) {
               console.error("Error saving polls to database", err.message);
-              await interaction.editReply("Failed to save the generated polls.");
+              await interaction.editReply(
+                "Failed to save the generated polls."
+              );
               return;
             }
 
             lastGeneratedOutlineId = this.lastID;
-            
+
             // Store questions for interactive display
             POLL_STORAGE.set(interaction.user.id, {
               questions,
               currentIndex: 0,
-              votes: new Array(questions.length).fill().map(() => new Map())
+              votes: new Array(questions.length).fill().map(() => new Map()),
             });
 
             // Send first question
-            await sendPollQuestion(interaction, questions[0], 0, questions.length);
+            await sendPollQuestion(
+              interaction,
+              questions[0],
+              0,
+              questions.length
+            );
           }
         );
       } catch (error) {
         console.error(`Error in createpolls command: ${error.message}`);
-        await interaction.editReply("An error occurred while creating the polls.");
+        await interaction.editReply(
+          "An error occurred while creating the polls."
+        );
       }
-    }
-
-    else if (commandName === "pollresults") {
+    } else if (commandName === "pollresults") {
       try {
         const userData = POLL_STORAGE.get(interaction.user.id);
         if (!userData) {
-          await interaction.editReply("No active polls found.");
+          await interaction.followUp("No active polls found.");
           return;
         }
 
-        const questionNum = options.getInteger("question") || (userData.currentIndex + 1);
+        const questionNum =
+          options.getInteger("question") || userData.currentIndex + 1;
         const questionIndex = questionNum - 1;
 
         if (questionIndex < 0 || questionIndex >= userData.questions.length) {
-          await interaction.editReply("Invalid question number.");
+          await interaction.followUp("Invalid question number.");
           return;
         }
 
         const question = userData.questions[questionIndex];
         const votes = userData.votes[questionIndex];
-        
+
         const results = new Array(question.options.length).fill(0);
-        votes.forEach(vote => results[vote]++);
+        votes.forEach((vote) => results[vote]++);
 
         const embed = new EmbedBuilder()
           .setTitle(`Poll Results: Question ${questionNum}`)
           .setDescription(question.text)
           .addFields({
-            name: 'Results',
-            value: question.options.map((opt, i) => 
-              `${EMOJI_LETTERS[i]} ${opt}: ${results[i]} votes (${Math.round(results[i] / votes.size * 100) || 0}%)`
-            ).join('\n')
+            name: "Results",
+            value: question.options
+              .map(
+                (opt, i) =>
+                  `${EMOJI_LETTERS[i]} ${opt}: ${results[i]} votes (${
+                    Math.round((results[i] / votes.size) * 100) || 0
+                  }%)`
+              )
+              .join("\n"),
           })
           .setFooter({ text: `Correct Answer: ${question.correct}` })
-          .setColor('#00FF00');
+          .setColor("#00FF00");
 
         await interaction.editReply({ embeds: [embed] });
       } catch (error) {
         console.error(`Error in pollresults command: ${error.message}`);
-        await interaction.editReply("An error occurred while showing poll results.");
+        await interaction.followUp(
+          "An error occurred while showing poll results."
+        );
       }
-    }
-    else if (commandName === "save") {
+    } else if (commandName === "save") {
       try {
         const fileName = options.getString("name");
 
@@ -629,12 +656,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
           "An error occurred while saving the outline."
         );
       }
-    }
-
-    else if (commandName === "createslide") {
+    } else if (commandName === "createslide") {
       try {
-        const className = interaction.options.getString("classname") || "Class Name Not Provided";
-        const inputUsername = interaction.options.getString("username") || "Instructor Not Provided";
+        const className =
+          interaction.options.getString("classname") ||
+          "Class Name Not Provided";
+        const inputUsername =
+          interaction.options.getString("username") ||
+          "Instructor Not Provided";
         const userId = interaction.user.id;
 
         const savedOutlines = await getSavedOutlines();
@@ -661,7 +690,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!fs.existsSync(slidePath)) {
           throw new Error("Slide image was not created.");
         }
-        
+
         await interaction.followUp({
           content: "Here is your generated slide!",
           files: [{ attachment: slidePath, name: "slide.png" }],
@@ -671,50 +700,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.followUp("Failed to generate slide.");
       }
     } else if (commandName === "next") {
-    const userId = interaction.user.id;
+      const userId = interaction.user.id;
 
-    // Check if user is in an active presentation (after /start)
-    if (presentationState[userId]) {
-      const state = presentationState[userId];
-      state.currentSlide = (state.currentSlide + 1) % state.slides.length; // Loop back to the start if at the end
+      // Check if user is in an active presentation (after /start)
+      if (presentationState[userId]) {
+        const state = presentationState[userId];
+        state.currentSlide = (state.currentSlide + 1) % state.slides.length; // Loop back to the start if at the end
 
-      return interaction.followUp({
-        content: "Here is your next slide:",
-        files: [{ attachment: state.slides[state.currentSlide] }],
-      });
-    }
-
-    // Fallback to pre-saving (during /createslide)
-    const savedOutlines = await getSavedOutlines();
-    if (savedOutlines.length === 0) {
-      return interaction.followUp(
-        "No saved outlines found. Generate slides first."
-      );
-    }
-
-    const outlineContent = savedOutlines[0].outline;
-    const slidePath = await nextSlide(outlineContent, userId);
-
-    return interaction.followUp({
-      content: "Here is your next slide:",
-      files: [{ attachment: slidePath }],
-    });
-
-  } else if (commandName === "back") {
-      try {
-        const savedOutlines = await getSavedOutlines();
-        if (savedOutlines.length === 0) {
-          await interaction.editReply("No saved outlines found.");
-          return;
-        }
-
-        const outlineContent = savedOutlines[0].outline;
-        const imagePath = await previousSlide(outlineContent, interaction.user.id);
-
-        await interaction.followUp({ files: [{ attachment: imagePath }] });
-      } catch (error) {
-        console.error("Error going to previous slide:", error);
-        await interaction.editReply("Failed to go to the previous slide.");
         return interaction.followUp({
           content: "Here is your next slide:",
           files: [{ attachment: state.slides[state.currentSlide] }],
@@ -826,21 +818,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       db.all(
-        `SELECT slidePath FROM saved_slides WHERE userId = ? AND folderName = ? ORDER BY id ASC`,
+        `SELECT * FROM saved_slides WHERE userId = ? AND folderName = ?  ORDER BY title ASC`,
         [userId, folderName],
         (err, rows) => {
           if (err) {
-            console.error("Error fetching saved slides:", err);
-            return interaction.reply("Failed to start the presentation.");
+            console.error("Error fetching saved slides:", err.message);
+            return;
           }
-
-          if (rows.length === 0) {
-            return interaction.followUp(
-              `No saved slides found in folder: ${folderName}.`
-            );
-          }
-
           const slides = rows.map((row) => row.slidePath);
+          console.log("Slides retrieved in order:", slides);
+
           presentationState[userId] = {
             slides: slides,
             currentSlide: 0, // Start from the first slide
@@ -865,26 +852,80 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   } catch (error) {
     console.error(`Error handling interaction: ${error.message}`);
-    await interaction.editReply("An error occurred while processing your request.");
+    await interaction.editReply(
+      "An error occurred while processing your request."
+    );
   }
-  if (commandName === "quiz")
-    {
-      const uploadedMaterials = await getUploadedMaterials();
-      const questionNumber = options.getString("length") || 10; //Default will be 10
-      const savedOutlines = await getSavedOutlines();
-      console.log("Uploaded Materials:", uploadedMaterials);
-  
-      if (savedOutlines.length === 0) {
-        await interaction.editReply("No saved outlines found.");
-        return;
+  if (commandName === "quiz") {
+    const uploadedMaterials = await getUploadedMaterials();
+    const questionNumber = options.getString("length") || 10; //Default will be 10
+    const savedOutlines = await getSavedOutlines();
+    console.log("Uploaded Materials:", uploadedMaterials);
+
+    if (savedOutlines.length === 0) {
+      await interaction.editReply("No saved outlines found.");
+      return;
+    }
+
+    const outlineContent = savedOutlines[0].outline;
+    if (uploadedMaterials.length === 0) {
+      await interaction.editReply(
+        "Cannot generate quiz without uploaded materials"
+      );
+      return;
+    }
+
+    const response = await axios.post(
+      "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+      {
+        model: "gpt-4",
+        messages: [
+          {
+            role: "system",
+            content: `Generate a ${questionNumber}-question multiple choice quiz based on the content in ${outlineContent}, include the correct answers`,
+          },
+        ],
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.API_KEY}`,
+        },
       }
-  
-      const outlineContent = savedOutlines[0].outline;
-      if(uploadedMaterials.length === 0){
-        await interaction.editReply("Cannot generate quiz without uploaded materials");
+    );
+    const content = response.data.choices[0].message.content;
+    const name = options.getString("name");
+    db.run(
+      "INSERT INTO generated_quizzes (name, quiz) VALUES (?, ?)",
+      [name, content],
+      function (err) {
+        if (err) {
+          console.error("Error saving quiz", err.message);
+          interaction.editReply("Failed to save the generated quiz.");
+        } else {
+          lastGeneratedQuizId = this.lastID; // Store the last generated quiz ID
+          splitAndSendMessage(interaction.channel, content, 2000);
+          interaction.editReply("Quiz generated and saved.");
+        }
+      }
+    );
+  }
+
+  if (commandName === "releasequiz") {
+    const quizName = options.getString("name"); // Get the quiz name from the command options
+    try {
+      // Retrieve the quiz from the database
+      const savedQuiz = await getSavedQuizzes(quizName);
+
+      if (!savedQuiz) {
+        await interaction.editReply(
+          `No quiz found with the name "${quizName}".`
+        );
         return;
       }
 
+      const quizContent = savedQuiz.quiz; // Extract the quiz content
+
+      //Remove answers
       const response = await axios.post(
         "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
         {
@@ -892,7 +933,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           messages: [
             {
               role: "system",
-              content: `Generate a ${questionNumber}-question multiple choice quiz based on the content in ${outlineContent}, include the correct answers`,
+              content: `Return the following quiz with the correct answers hidden:\n\n${quizContent}`,
             },
           ],
         },
@@ -902,63 +943,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
           },
         }
       );
-      const content = response.data.choices[0].message.content;
-      const name = options.getString("name")
-      db.run(
-        "INSERT INTO generated_quizzes (name, quiz) VALUES (?, ?)",
-        [name, content],
-        function (err) {
-          if (err) {
-            console.error("Error saving quiz", err.message);
-            interaction.editReply("Failed to save the generated quiz.");
-          } else {
-            lastGeneratedQuizId = this.lastID; // Store the last generated quiz ID
-            splitAndSendMessage(interaction.channel, content, 2000);
-            interaction.editReply("Quiz generated and saved.");
-          }
-        }
-      );
+      const modifiedQuiz = response.data.choices[0]?.message?.content;
+      await interaction.editReply(modifiedQuiz);
+    } catch (error) {
+      console.error("Error releasing quiz:", error.message);
+      await interaction.editReply("Unable to release quiz.");
     }
-  
-  if (commandName === "releasequiz") 
-    {
-      const quizName = options.getString("name"); // Get the quiz name from the command options
-      try {
-        // Retrieve the quiz from the database
-        const savedQuiz = await getSavedQuizzes(quizName);
-    
-        if (!savedQuiz) {
-          await interaction.editReply(`No quiz found with the name "${quizName}".`);
-          return;
-        }
-    
-        const quizContent = savedQuiz.quiz; // Extract the quiz content
-    
-        //Remove answers
-        const response = await axios.post(
-          "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-          {
-            model: "gpt-4",
-            messages: [
-              {
-                role: "system",
-                content: `Return the following quiz with the correct answers hidden:\n\n${quizContent}`,
-              },
-            ],
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.API_KEY}`,
-            },
-          }
-        );
-        const modifiedQuiz = response.data.choices[0]?.message?.content;
-        await interaction.editReply(modifiedQuiz);
-      } catch (error) 
-      {
-        console.error("Error releasing quiz:", error.message);
-        await interaction.editReply("Unable to release quiz.");
-      }
   }
 });
 // Helper Functions
@@ -976,19 +966,22 @@ async function splitAndSendMessage(channel, content, delay) {
     }
   }
 }
-
 async function sendPollQuestion(interaction, question, index, total) {
   const embed = new EmbedBuilder()
     .setTitle(`Poll Question ${index + 1}/${total}`)
     .setDescription(question.text)
-    .setColor('#0099ff');
+    .setColor("#0099ff");
 
-  if (question.options) {
-    embed.addFields({
-      name: 'Options',
-      value: question.options.map((opt, i) => 
-        `${EMOJI_LETTERS[i]} ${opt}`).join('\n')
-    });
+  if (question.text && question.options.length) {
+    embed.addFields([
+      { name: "Question", value: question.text },
+      {
+        name: "Options",
+        value: question.options
+          .map((opt, i) => `${EMOJI_LETTERS[i]} ${opt}`)
+          .join("\n"),
+      },
+    ]);
   }
 
   const message = await interaction.channel.send({ embeds: [embed] });
@@ -1001,27 +994,35 @@ async function sendPollQuestion(interaction, question, index, total) {
   }
 
   // Add navigation controls
-  await message.react('⬅️');
-  await message.react('➡️');
+  await message.react("⬅️");
+  await message.react("➡️");
 
   // Set up reaction collector
   const filter = (reaction, user) => user.id !== message.author.id;
   const collector = message.createReactionCollector({ filter, time: 300000 });
 
-  collector.on('collect', async (reaction, user) => {
+  collector.on("collect", async (reaction, user) => {
     const userData = POLL_STORAGE.get(interaction.user.id);
-    
-    if (reaction.emoji.name === '➡️') {
+
+    if (reaction.emoji.name === "➡️") {
       if (userData.currentIndex < userData.questions.length - 1) {
         userData.currentIndex++;
-        await sendPollQuestion(interaction, userData.questions[userData.currentIndex], 
-          userData.currentIndex, userData.questions.length);
+        await sendPollQuestion(
+          interaction,
+          userData.questions[userData.currentIndex],
+          userData.currentIndex,
+          userData.questions.length
+        );
       }
-    } else if (reaction.emoji.name === '⬅️') {
+    } else if (reaction.emoji.name === "⬅️") {
       if (userData.currentIndex > 0) {
         userData.currentIndex--;
-        await sendPollQuestion(interaction, userData.questions[userData.currentIndex], 
-          userData.currentIndex, userData.questions.length);
+        await sendPollQuestion(
+          interaction,
+          userData.questions[userData.currentIndex],
+          userData.currentIndex,
+          userData.questions.length
+        );
       }
     } else {
       // Record vote
@@ -1035,33 +1036,27 @@ async function sendPollQuestion(interaction, question, index, total) {
 
 function parseQuestions(content) {
   const questions = [];
-  const lines = content.split('\n');
+  const lines = content.split("\n");
   let currentQuestion = null;
 
-  for (const line of lines) {
-    if (line.startsWith('Question')) {
-      if (currentQuestion) {
-        questions.push(currentQuestion);
-      }
+  lines.forEach((line) => {
+    if (line.startsWith("Question")) {
+      if (currentQuestion) questions.push(currentQuestion);
       currentQuestion = {
-        text: line.split(':')[1].trim(),
+        text: line.split(":")[1].trim(),
         options: [],
-        correct: null
+        correct: null,
       };
-    } else if (line.match(/^[A-D]\)/)) {
+    } else if (/^[A-D]\)/.test(line)) {
       currentQuestion.options.push(line.substring(3).trim());
-    } else if (line.startsWith('Correct:')) {
-      currentQuestion.correct = line.split(':')[1].trim();
+    } else if (line.startsWith("Correct:")) {
+      currentQuestion.correct = line.split(":")[1].trim();
     }
-  }
-
-  if (currentQuestion) {
-    questions.push(currentQuestion);
-  }
+  });
+  if (currentQuestion) questions.push(currentQuestion);
 
   return questions;
 }
-
 function getSavedOutlines() {
   return new Promise((resolve, reject) => {
     db.all(
@@ -1107,9 +1102,9 @@ function getSavedQuizzes(name) {
 function extractVideoId(url) {
   try {
     const urlObj = new URL(url);
-    if (urlObj.hostname.includes('youtube.com')) {
-      return urlObj.searchParams.get('v');
-    } else if (urlObj.hostname === 'youtu.be') {
+    if (urlObj.hostname.includes("youtube.com")) {
+      return urlObj.searchParams.get("v");
+    } else if (urlObj.hostname === "youtu.be") {
       return urlObj.pathname.slice(1);
     }
   } catch (error) {
@@ -1122,11 +1117,13 @@ async function getYoutubeTranscript(videoId) {
   try {
     const transcriptArray = await YoutubeTranscript.fetchTranscript(videoId);
     return transcriptArray
-      .map(item => item.text)
-      .join(' ')
+      .map((item) => item.text)
+      .join(" ")
       .trim();
   } catch (error) {
-    throw new Error('Failed to fetch video transcript. Make sure the video has closed captions available.');
+    throw new Error(
+      "Failed to fetch video transcript. Make sure the video has closed captions available."
+    );
   }
 }
 
