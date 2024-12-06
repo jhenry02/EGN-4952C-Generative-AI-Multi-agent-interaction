@@ -1,3 +1,32 @@
+<<<<<<< HEAD
+node_modules/.bin/color-support
+node_modules/.bin/image-size
+node_modules/.bin/mkdirp
+node_modules/.bin/nanoid
+node_modules/.bin/node-gyp
+node_modules/.bin/node-which
+node_modules/.bin/nopt
+node_modules/.bin/openai
+node_modules/.bin/prebuild-install
+node_modules/.bin/rc
+node_modules/.bin/rimraf
+node_modules/.bin/semver
+node_modules/.bin/xml-js
+node_modules/color-support/bin.js
+node_modules/image-size/bin/image-size.js
+node_modules/mkdirp/bin/cmd.js
+node_modules/nanoid/bin/nanoid.js
+node_modules/node-gyp/bin/node-gyp.js
+node_modules/nopt/bin/nopt.js
+node_modules/openai/bin/cli
+node_modules/prebuild-install/bin.js
+node_modules/rc/cli.js
+node_modules/rimraf/bin.js
+node_modules/semver/bin/semver.js
+node_modules/sqlite3/build/Release/node_sqlite3.node
+node_modules/which/bin/node-which
+node_modules/xml-js/bin/cli.js
+=======
 # Ignore environment variables
 
 .env
@@ -5,3 +34,4 @@
 # Ignore node modules
 
 node_modules/
+>>>>>>> c2a73c84988af937b2823b11f43641389cb6270c

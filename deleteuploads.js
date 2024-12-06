@@ -1,19 +1,10 @@
 const sqlite3 = require("sqlite3").verbose();
-
-const db = new sqlite3.Database("./uploads.db", (err) => {
+const db = new sqlite3.Database("./uploads.db"); // Adjust path to your SQLite DB
+db.run(`DELETE FROM generated_quizzes`, (err) => {
   if (err) {
-    console.error("Error opening database " + err.message);
+    console.error("Error deleting all records from uploads table", err.message);
   } else {
-    console.log("Connected to the SQLite database.");
-  }
-});
-
-// Delete all entries from the uploads table
-db.run("DELETE FROM uploads", function (err) {
-  if (err) {
-    console.error("Error deleting uploads:", err.message);
-  } else {
-    console.log("All uploaded files have been deleted.");
+    console.log("All records deleted successfully from uploads table.");
   }
 });
 
