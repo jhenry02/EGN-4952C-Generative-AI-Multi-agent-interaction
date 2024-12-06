@@ -18,12 +18,6 @@ const {
   userSlides,
 } = require("./canva.js");
 const { YoutubeTranscript } = require("youtube-transcript");
-const {
-  createSlide,
-  nextSlide,
-  previousSlide,
-  userSlides,
-} = require("./canva.js");
 
 const presentationState = {}; // { userId: { slides: [], currentSlide: 0 } }
 
@@ -42,6 +36,24 @@ const db = new sqlite3.Database("./uploads.db", (err) => {
 });
 
 // Create tables if they don't exist
+db.run(
+  `CREATE TABLE IF NOT EXISTS homework (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+title TEXT NOT NULL,
+description TEXT,
+file_path TEXT,
+due_date TEXT,
+uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+uploaded_by TEXT
+)`,
+  (err) => {
+    if (err) {
+      console.error("Error creating homework table", err.message);
+    } else {
+      console.log("Homework table is ready.");
+    }
+  }
+);
 db.run(
   `CREATE TABLE IF NOT EXISTS saved_slides (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -392,7 +404,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           "An error occurred while creating the outline."
         );
       }
-    } else if (commandName === "save") {
     } else if (commandName === "createoutlineyoutube") {
       try {
         const youtubeUrl = options.getString("url");
@@ -1035,25 +1046,75 @@ client.on(Events.InteractionCreate, async (interaction) => {
             await interaction.editReply({ embeds: [embed] });
           }
         );
-      } else if (commandName === "quiz") {
-        const uploadedMaterials = await getUploadedMaterials();
-        const questionNumber = options.getString("length") || 10; //Default will be 10
-        const savedOutlines = await getSavedOutlines();
-        console.log("Uploaded Materials:", uploadedMaterials);
+      }
+    } else if (commandName === "quiz") {
+      const uploadedMaterials = await getUploadedMaterials();
+      const questionNumber = options.getString("length") || 10; //Default will be 10
+      const savedOutlines = await getSavedOutlines();
+      console.log("Uploaded Materials:", uploadedMaterials);
 
-        if (savedOutlines.length === 0) {
-          await interaction.editReply("No saved outlines found.");
-          return;
+      if (savedOutlines.length === 0) {
+        await interaction.editReply("No saved outlines found.");
+        return;
+      }
+
+      const outlineContent = savedOutlines[0].outline;
+      if (uploadedMaterials.length === 0) {
+        await interaction.editReply(
+          "Cannot generate quiz without uploaded materials"
+        );
+        return;
+      }
+
+      const response = await axios.post(
+        "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+        {
+          model: "gpt-4",
+          messages: [
+            {
+              role: "system",
+              content: `Generate a ${questionNumber}-question multiple choice quiz based on the content in ${outlineContent}, include the correct answers`,
+            },
+          ],
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.API_KEY}`,
+          },
         }
+      );
+      const content = response.data.choices[0].message.content;
+      const name = options.getString("name");
+      db.run(
+        "INSERT INTO generated_quizzes (name, quiz) VALUES (?, ?)",
+        [name, content],
+        function (err) {
+          if (err) {
+            console.error("Error saving quiz", err.message);
+            interaction.editReply("Failed to save the generated quiz.");
+          } else {
+            lastGeneratedQuizId = this.lastID; // Store the last generated quiz ID
+            splitAndSendMessage(interaction.channel, content, 2000);
+            interaction.editReply("Quiz generated and saved.");
+          }
+        }
+      );
+    } else if (commandName === "releasequiz") {
+      const quizName = options.getString("name"); // Get the quiz name from the command options
+      try {
+        // Retrieve the quiz from the database
+        const savedQuiz = await getSavedQuizzes(quizName);
 
-        const outlineContent = savedOutlines[0].outline;
-        if (uploadedMaterials.length === 0) {
+        if (!savedQuiz) {
           await interaction.editReply(
-            "Cannot generate quiz without uploaded materials"
+            `No quiz found with the name "${quizName}".`
           );
           return;
         }
 
+        const quizContent = savedQuiz.quiz; // Extract the quiz content
+
+        //Remove answers
         const response = await axios.post(
           "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
           {
@@ -1061,7 +1122,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             messages: [
               {
                 role: "system",
-                content: `Generate a ${questionNumber}-question multiple choice quiz based on the content in ${outlineContent}, include the correct answers`,
+                content: `Return the following quiz with the correct answers hidden:\n\n${quizContent}`,
               },
             ],
           },
@@ -1071,218 +1132,91 @@ client.on(Events.InteractionCreate, async (interaction) => {
             },
           }
         );
-        const content = response.data.choices[0].message.content;
-        const name = options.getString("name");
-        db.run(
-          "INSERT INTO generated_quizzes (name, quiz) VALUES (?, ?)",
-          [name, content],
-          function (err) {
-            if (err) {
-              console.error("Error saving quiz", err.message);
-              interaction.editReply("Failed to save the generated quiz.");
-            } else {
-              lastGeneratedQuizId = this.lastID; // Store the last generated quiz ID
-              splitAndSendMessage(interaction.channel, content, 2000);
-              interaction.editReply("Quiz generated and saved.");
-            }
-          }
-        );
-        db.run(
-          `CREATE TABLE IF NOT EXISTS homework (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    description TEXT,
-    file_path TEXT,
-    due_date TEXT,
-    uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    uploaded_by TEXT
-  )`,
-          (err) => {
-            if (err) {
-              console.error("Error creating homework table", err.message);
-            } else {
-              console.log("Homework table is ready.");
-            }
-          }
-        );
-      } else if (commandName === "releasequiz") {
-        const quizName = options.getString("name"); // Get the quiz name from the command options
-        try {
-          // Retrieve the quiz from the database
-          const savedQuiz = await getSavedQuizzes(quizName);
-
-          if (!savedQuiz) {
-            await interaction.editReply(
-              `No quiz found with the name "${quizName}".`
-            );
-            return;
-          }
-
-          const quizContent = savedQuiz.quiz; // Extract the quiz content
-
-          //Remove answers
-          const response = await axios.post(
-            "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-            {
-              model: "gpt-4",
-              messages: [
-                {
-                  role: "system",
-                  content: `Return the following quiz with the correct answers hidden:\n\n${quizContent}`,
-                },
-              ],
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.API_KEY}`,
-              },
-            }
-          );
-          const modifiedQuiz = response.data.choices[0]?.message?.content;
-          await interaction.editReply(modifiedQuiz);
-        } catch (error) {
-          console.error("Error releasing quiz:", error.message);
-          await interaction.editReply("Unable to release quiz.");
-        }
+        const modifiedQuiz = response.data.choices[0]?.message?.content;
+        await interaction.editReply(modifiedQuiz);
+      } catch (error) {
+        console.error("Error releasing quiz:", error.message);
+        await interaction.editReply("Unable to release quiz.");
       }
-      // Inside your client.on(Events.InteractionCreate) event handler,
-      // alongside your existing command handlers (createoutline, quiz, etc.)
-      // Add these cases to handle homework commands:
-      else if (commandName === "homework") {
-        try {
-          const length = options.getString("length");
-          const name = options.getString("name");
-          const dueDate = options.getString("duedate");
+    }
+    // Inside your client.on(Events.InteractionCreate) event handler,
+    // alongside your existing command handlers (createoutline, quiz, etc.)
+    // Add these cases to handle homework commands:
+    else if (commandName === "releasehomework") {
+      try {
+        const name = options.getString("name");
 
-          const savedOutlines = await getSavedOutlines();
-          if (savedOutlines.length === 0) {
-            await interaction.editReply(
-              "No saved outlines found. Please create an outline first."
-            );
-            return;
-          }
-
-          const outlineContent = savedOutlines[0].outline;
-
-          // Generate homework using the AI
-          const response = await axios.post(
-            "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-            {
-              model: "gpt-4",
-              messages: [
-                {
-                  role: "system",
-                  content: `Generate a homework assignment with ${length} questions based on the following outline. Include detailed problems that test understanding and application of the concepts. Include solutions for instructor reference. Each question should require thoughtful analysis and demonstrate understanding of the material:\n\n${outlineContent}`,
-                },
-              ],
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.API_KEY}`,
-              },
-            }
-          );
-
-          const homeworkContent = response.data.choices[0].message.content;
-
-          // Save to database
-          db.run(
-            "INSERT INTO generated_homework (name, content, due_date) VALUES (?, ?, ?)",
-            [name, homeworkContent, dueDate],
-            function (err) {
-              if (err) {
-                console.error("Error saving homework", err.message);
-                interaction.editReply("Failed to save the generated homework.");
-                return;
-              }
-
-              // Send the homework to the channel
-              splitAndSendMessage(interaction.channel, homeworkContent, 2000);
-              interaction.editReply(
-                `Homework "${name}" generated and saved. Due date: ${dueDate}`
+        // Get homework from database
+        db.get(
+          "SELECT * FROM generated_homework WHERE name = ?",
+          [name],
+          async (err, homework) => {
+            if (err) {
+              console.error("Error fetching homework:", err);
+              await interaction.editReply(
+                "Failed to fetch homework assignment."
               );
+              return;
             }
-          );
-        } catch (error) {
-          console.error("Error generating homework:", error);
-          await interaction.editReply(
-            "Failed to generate homework assignment."
-          );
-        }
-      } else if (commandName === "releasehomework") {
-        try {
-          const name = options.getString("name");
 
-          // Get homework from database
-          db.get(
-            "SELECT * FROM generated_homework WHERE name = ?",
-            [name],
-            async (err, homework) => {
-              if (err) {
-                console.error("Error fetching homework:", err);
-                await interaction.editReply(
-                  "Failed to fetch homework assignment."
-                );
-                return;
-              }
-
-              if (!homework) {
-                await interaction.editReply(
-                  `No homework found with the name "${name}".`
-                );
-                return;
-              }
-
-              // Remove solutions using AI
-              const response = await axios.post(
-                "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
-                {
-                  model: "gpt-4",
-                  messages: [
-                    {
-                      role: "system",
-                      content: `Remove all solutions and answers from this homework assignment, keeping only the questions and any necessary context or instructions:\n\n${homework.content}`,
-                    },
-                  ],
-                },
-                {
-                  headers: {
-                    Authorization: `Bearer ${process.env.API_KEY}`,
-                  },
-                }
+            if (!homework) {
+              await interaction.editReply(
+                `No homework found with the name "${name}".`
               );
+              return;
+            }
 
-              const studentVersion = response.data.choices[0].message.content;
-
-              // Create embed for homework
-              const embed = {
-                title: `Homework Assignment: ${name}`,
-                description:
-                  "Please complete all questions and submit by the due date.",
-                fields: [
+            // Remove solutions using AI
+            const response = await axios.post(
+              "https://fauengtrussed.fau.edu/provider/generic/chat/completions",
+              {
+                model: "gpt-4",
+                messages: [
                   {
-                    name: "Due Date",
-                    value: homework.due_date,
-                    inline: true,
+                    role: "system",
+                    content: `Remove all solutions and answers from this homework assignment, keeping only the questions and any necessary context or instructions:\n\n${homework.content}`,
                   },
                 ],
-                color: 0x0099ff,
-                timestamp: new Date(),
-              };
+              },
+              {
+                headers: {
+                  Authorization: `Bearer ${process.env.API_KEY}`,
+                },
+              }
+            );
 
-              // Send to channel
-              await interaction.editReply({ embeds: [embed] });
-              await splitAndSendMessage(
-                interaction.channel,
-                studentVersion,
-                2000
-              );
-            }
-          );
-        } catch (error) {
-          console.error("Error releasing homework:", error);
-          await interaction.editReply("Failed to release homework assignment.");
-        }
+            const studentVersion = response.data.choices[0].message.content;
+
+            // Create embed for homework
+            const embed = {
+              title: `Homework Assignment: ${name}`,
+              description:
+                "Please complete all questions and submit by the due date.",
+              fields: [
+                {
+                  name: "Due Date",
+                  value: homework.due_date,
+                  inline: true,
+                },
+              ],
+              color: 0x0099ff,
+              timestamp: new Date(),
+            };
+
+            // Send to channel
+            await interaction.editReply({ embeds: [embed] });
+            await splitAndSendMessage(
+              interaction.channel,
+              studentVersion,
+              2000
+            );
+          }
+        );
+      } catch (error) {
+        console.error("Error releasing homework:", error);
+        await interaction.editReply(
+          "Failed to release homework. Please try again."
+        );
       }
     }
   } catch (error) {
