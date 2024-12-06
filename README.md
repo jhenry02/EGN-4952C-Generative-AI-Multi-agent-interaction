@@ -22,7 +22,7 @@ OwlTA is an innovative educational platform that combines human expertise with A
  - For managing and storing user data, OwlTA uses SQLite3 as its database engine. SQLite3 is a lightweight SQL database that allows us to store and retrieve user inputs efficiently. We use it to handle data related to lesson plans, student progress, and other interactions on the platform. By leveraging SQL, we can perform queries to insert, update, and retrieve data, ensuring that the platform can manage and track real-time changes in the classroom environment, such as saving outlines or processing student inquiries.
 
 ### **Our Most Recent Demo:**
-https://youtu.be/2sYdWIMlPXw
+https://www.youtube.com/watch?v=MS53UF5_79E
 
 ### **Our Most Recent PowerPoint:**
 https://www.canva.com/design/DAGRmzF7LDE/Jpe9q43pY_UnBGeKXCuBkg/edit?utm_content=DAGRmzF7LDE&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton
